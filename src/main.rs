@@ -87,40 +87,6 @@ fn main() {
         .unwrap();
     thread::sleep(Duration::from_millis(10));
 
-    // capture #99
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x035a,
-                index: 4,
-                data: &parse_hex_string("5ad07c00000000000000000000000000"),
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(10));
-
-    // capture #101
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x035a,
-                index: 4,
-                data: &parse_hex_string("5abac5c4010000000000000000000000"),
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(10));
-
     // capture #103
     keyboard
         .control_out(
@@ -175,6 +141,9 @@ fn main() {
     println!("Control out sent");
 
     let ep5_thread = thread::spawn(move || {
+        let mut backlight_state = BacklightState::Low;
+        let mut mute_microphone_led_state = MuteMicrophoneLEDState::Off;
+        // TODO send initial state to keyboard
         loop {
             let buffer = endpoint_5.allocate(64);
             let result = endpoint_5.transfer_blocking(buffer, Duration::MAX);
@@ -184,6 +153,20 @@ fn main() {
                 println!("All function keys released");
             } else if data == vec![90, 199, 0, 0, 0, 0] {
                 println!("Backlight key pressed");
+                backlight_state = backlight_state.next();
+                keyboard.control_out(
+                    ControlOut {
+                        control_type: ControlType::Class,
+                        recipient: Recipient::Interface,
+                        request: 0x09,
+                        value: 0x035a,
+                        index: 4,
+                        data: &backlight_state.get_control_data(),
+                    },
+                    Duration::from_millis(200),
+                )
+                .wait()
+                .unwrap();
             } else if data == vec![90, 16, 0, 0, 0, 0] {
                 println!("Brightness down key pressed");
             } else if data == vec![90, 32, 0, 0, 0, 0] {
@@ -192,6 +175,20 @@ fn main() {
                 println!("Swap up down display key pressed");
             } else if data == vec![90, 124, 0, 0, 0, 0] {
                 println!("Mute microphone key pressed");
+                mute_microphone_led_state = mute_microphone_led_state.next();
+                keyboard.control_out(
+                    ControlOut {
+                        control_type: ControlType::Class,
+                        recipient: Recipient::Interface,
+                        request: 0x09,
+                        value: 0x035a,
+                        index: 4,
+                        data: &mute_microphone_led_state.get_control_data(),
+                    },
+                    Duration::from_millis(200),
+                )
+                .wait()
+                .unwrap();
             } else if data == vec![90, 126, 0, 0, 0, 0] {
                 println!("Emoji key pressed");
             } else if data == vec![90, 134, 0, 0, 0, 0] {
@@ -213,4 +210,53 @@ fn parse_hex_string(hex_string: &str) -> Vec<u8> {
         bytes.push(u8::from_str_radix(&hex_string[i..i + 2], 16).unwrap());
     }
     bytes
+}
+
+
+enum BacklightState {
+    Off,
+    Low,
+    Medium,
+    High,
+}
+
+impl BacklightState {
+    fn next(&self) -> Self {
+        match self {
+            Self::Off => Self::Low,
+            Self::Low => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High => Self::Off,
+        }
+    }
+
+    fn get_control_data(&self) -> Vec<u8> {
+        match self {
+            Self::Off => parse_hex_string("5abac5c4000000000000000000000000"),
+            Self::Low => parse_hex_string("5abac5c4010000000000000000000000"),
+            Self::Medium => parse_hex_string("5abac5c4020000000000000000000000"),
+            Self::High => parse_hex_string("5abac5c4030000000000000000000000"),
+        }
+    }
+}
+
+enum MuteMicrophoneLEDState {
+    Off,
+    On,
+}
+
+impl MuteMicrophoneLEDState {
+    fn next(&self) -> Self {
+        match self {
+            Self::Off => Self::On,
+            Self::On => Self::Off,
+        }
+    }
+
+    fn get_control_data(&self) -> Vec<u8> {
+        match self {
+            Self::Off => parse_hex_string("5ad07c00000000000000000000000000"),
+            Self::On => parse_hex_string("5ad07c01000000000000000000000000"),
+        }
+    }
 }
