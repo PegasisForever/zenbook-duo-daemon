@@ -16,14 +16,8 @@ fn main() {
 
     let keyboard = keyboard.open().wait().unwrap();
 
-    let interface_0 = keyboard.detach_and_claim_interface(0).wait().unwrap();
-    let mut endpoint_1 = interface_0.endpoint::<Interrupt, In>(0x81).unwrap();
-
     let interface_4 = keyboard.detach_and_claim_interface(4).wait().unwrap();
     let mut endpoint_5 = interface_4.endpoint::<Interrupt, In>(0x85).unwrap();
-
-    let interface_5 = keyboard.detach_and_claim_interface(5).wait().unwrap();
-    let mut endpoint_6 = interface_5.endpoint::<Interrupt, In>(0x86).unwrap();
 
     // capture #87
     keyboard
@@ -144,174 +138,6 @@ fn main() {
         .unwrap();
     thread::sleep(Duration::from_millis(200));
 
-    // capture #105
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x030d,
-                index: 5,
-                data: &[0x0d, 0x05, 0x03, 0xa0, 0x01],
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(200));
-
-    // capture #113
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x0307,
-                index: 5,
-                data: &[0x07, 0x00, 0x00],
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(200));
-
-    // capture #117
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x030d,
-                index: 5,
-                data: &[0x0d, 0x05, 0x03, 0x04, 0x01],
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(200));
-
-    // capture #121
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x030d,
-                index: 5,
-                data: &[0x0d, 0x05, 0x03, 0xa5, 0x01],
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(200));
-
-    // capture #125
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x030d,
-                index: 5,
-                data: &[0x0d, 0x05, 0x03, 0xaa, 0x01],
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(200));
-
-    // capture #129
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x030d,
-                index: 5,
-                data: &[0x0d, 0x05, 0x03, 0x05, 0x01],
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(200));
-
-    // capture #129
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x030d,
-                index: 5,
-                data: &[0x0d, 0x05, 0x03, 0x02, 0x01],
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(200));
-
-    // capture #137
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x0303,
-                index: 5,
-                data: &[0x03, 0x03],
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    // capture #138
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x0305,
-                index: 5,
-                data: &[0x05, 0x03],
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(200));
-
-    // capture #141
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x0200,
-                index: 0,
-                data: &[0x00],
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(200));
-
     // capture #143
     keyboard
         .control_out(
@@ -348,40 +174,37 @@ fn main() {
 
     println!("Control out sent");
 
-    let ep1_thread = thread::spawn(move || {
-        loop {
-            let buffer = endpoint_1.allocate(64);
-            let result = endpoint_1.transfer_blocking(buffer, Duration::MAX);
-            let data = result.buffer.into_vec();
-            println!("[EP1] {:?}", data);
-        }
-    });
-
     let ep5_thread = thread::spawn(move || {
         loop {
             let buffer = endpoint_5.allocate(64);
             let result = endpoint_5.transfer_blocking(buffer, Duration::MAX);
             let data = result.buffer.into_vec();
-            println!("[EP5] {:?}", data);
-        }
-    });
-    let ep6_thread = thread::spawn(move || {
-        loop {
-            let buffer = endpoint_6.allocate(64);
-            let result = endpoint_6.transfer_blocking(buffer, Duration::MAX);
-
-            let data = result.buffer.into_vec();
-            if data == vec![1, 0, 0, 0, 0] {
-                println!("[EP6] Fn pressed");
+            // only one function key can be pressed at a time, this is a hardware limitation
+            if data == vec![90, 0, 0, 0, 0, 0] {
+                println!("All function keys released");
+            } else if data == vec![90, 199, 0, 0, 0, 0] {
+                println!("Backlight key pressed");
+            } else if data == vec![90, 16, 0, 0, 0, 0] {
+                println!("Brightness down key pressed");
+            } else if data == vec![90, 32, 0, 0, 0, 0] {
+                println!("Brightness up key pressed");
+            } else if data == vec![90, 156, 0, 0, 0, 0] {
+                println!("Swap up down display key pressed");
+            } else if data == vec![90, 124, 0, 0, 0, 0] {
+                println!("Mute microphone key pressed");
+            } else if data == vec![90, 126, 0, 0, 0, 0] {
+                println!("Emoji key pressed");
+            } else if data == vec![90, 134, 0, 0, 0, 0] {
+                println!("MyASUS key pressed");
+            } else if data == vec![90, 106, 0, 0, 0, 0] {
+                println!("Disable second display key pressed");
             } else {
-                println!("[EP6] Unknown key pressed, {:?}", data);
+                println!("[EP5] Unknown key pressed, {:?}", data);
             }
         }
     });
 
-    ep1_thread.join().ok();
     ep5_thread.join().ok();
-    ep6_thread.join().ok();
 }
 
 fn parse_hex_string(hex_string: &str) -> Vec<u8> {
