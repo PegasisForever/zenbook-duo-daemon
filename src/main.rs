@@ -19,58 +19,7 @@ fn main() {
     let interface_4 = keyboard.detach_and_claim_interface(4).wait().unwrap();
     let mut endpoint_5 = interface_4.endpoint::<Interrupt, In>(0x85).unwrap();
 
-    // capture #87
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x035a,
-                index: 4,
-                data: &parse_hex_string("5a4153555320546563682e496e632e00"),
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(10));
-
-    // capture #89
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x035a,
-                index: 4,
-                data: &parse_hex_string("5ad03dffffff00000000000000000000"),
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(10));
-
-    // capture #93
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x035a,
-                index: 4,
-                data: &parse_hex_string("5a052031000800000000000000000000"),
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(10));
-
-    // capture #97
+    // enable fn keys
     keyboard
         .control_out(
             ControlOut {
@@ -85,65 +34,46 @@ fn main() {
         )
         .wait()
         .unwrap();
-    thread::sleep(Duration::from_millis(10));
-
-    // capture #103
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x035a,
-                index: 4,
-                data: &parse_hex_string("5ad08f01000000000000000000000000"),
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(200));
-
-    // capture #143
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x035a,
-                index: 4,
-                data: &parse_hex_string("5ad089e0000000000000000000000000"),
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(10));
-
-    // capture #147
-    keyboard
-        .control_out(
-            ControlOut {
-                control_type: ControlType::Class,
-                recipient: Recipient::Interface,
-                request: 0x09,
-                value: 0x035a,
-                index: 4,
-                data: &parse_hex_string("5ad089ff000000000000000000000000"),
-            },
-            Duration::from_millis(200),
-        )
-        .wait()
-        .unwrap();
-    thread::sleep(Duration::from_millis(200));
-
-    println!("Control out sent");
 
     let ep5_thread = thread::spawn(move || {
+        let set_backlight_state = |state: BacklightState| {
+            keyboard
+                .control_out(
+                    ControlOut {
+                        control_type: ControlType::Class,
+                        recipient: Recipient::Interface,
+                        request: 0x09,
+                        value: 0x035a,
+                        index: 4,
+                        data: &state.get_control_data(),
+                    },
+                    Duration::from_millis(200),
+                )
+                .wait()
+                .unwrap();
+        };
+
+        let set_mute_microphone_led_state = |state: MuteMicrophoneLEDState| {
+            keyboard
+                .control_out(
+                    ControlOut {
+                        control_type: ControlType::Class,
+                        recipient: Recipient::Interface,
+                        request: 0x09,
+                        value: 0x035a,
+                        index: 4,
+                        data: &state.get_control_data(),
+                    },
+                    Duration::from_millis(200),
+                )
+                .wait()
+                .unwrap();
+        };
+
         let mut backlight_state = BacklightState::Low;
         let mut mute_microphone_led_state = MuteMicrophoneLEDState::Off;
-        // TODO send initial state to keyboard
+        set_backlight_state(backlight_state);
+        set_mute_microphone_led_state(mute_microphone_led_state);
         loop {
             let buffer = endpoint_5.allocate(64);
             let result = endpoint_5.transfer_blocking(buffer, Duration::MAX);
@@ -154,19 +84,7 @@ fn main() {
             } else if data == vec![90, 199, 0, 0, 0, 0] {
                 println!("Backlight key pressed");
                 backlight_state = backlight_state.next();
-                keyboard.control_out(
-                    ControlOut {
-                        control_type: ControlType::Class,
-                        recipient: Recipient::Interface,
-                        request: 0x09,
-                        value: 0x035a,
-                        index: 4,
-                        data: &backlight_state.get_control_data(),
-                    },
-                    Duration::from_millis(200),
-                )
-                .wait()
-                .unwrap();
+                set_backlight_state(backlight_state);
             } else if data == vec![90, 16, 0, 0, 0, 0] {
                 println!("Brightness down key pressed");
             } else if data == vec![90, 32, 0, 0, 0, 0] {
@@ -176,19 +94,7 @@ fn main() {
             } else if data == vec![90, 124, 0, 0, 0, 0] {
                 println!("Mute microphone key pressed");
                 mute_microphone_led_state = mute_microphone_led_state.next();
-                keyboard.control_out(
-                    ControlOut {
-                        control_type: ControlType::Class,
-                        recipient: Recipient::Interface,
-                        request: 0x09,
-                        value: 0x035a,
-                        index: 4,
-                        data: &mute_microphone_led_state.get_control_data(),
-                    },
-                    Duration::from_millis(200),
-                )
-                .wait()
-                .unwrap();
+                set_mute_microphone_led_state(mute_microphone_led_state);
             } else if data == vec![90, 126, 0, 0, 0, 0] {
                 println!("Emoji key pressed");
             } else if data == vec![90, 134, 0, 0, 0, 0] {
@@ -212,7 +118,7 @@ fn parse_hex_string(hex_string: &str) -> Vec<u8> {
     bytes
 }
 
-
+#[derive(Clone, Copy)]
 enum BacklightState {
     Off,
     Low,
@@ -240,6 +146,7 @@ impl BacklightState {
     }
 }
 
+#[derive(Clone, Copy)]
 enum MuteMicrophoneLEDState {
     Off,
     On,
