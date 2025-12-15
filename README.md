@@ -49,6 +49,9 @@ curl -fsSL https://raw.githubusercontent.com/PegasisForever/zenbook-duo-daemon/r
 
 # Uninstall
 curl -fsSL https://raw.githubusercontent.com/PegasisForever/zenbook-duo-daemon/refs/heads/master/install.sh | sudo bash -s uninstall
+
+# Check logs
+systemctl status zenbook-duo-daemon
 ```
 
 The install script will:
