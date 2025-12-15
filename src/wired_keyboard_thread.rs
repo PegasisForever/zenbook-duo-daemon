@@ -7,8 +7,7 @@ use nusb::{
 };
 
 use crate::{
-    BacklightState, KeyboardState, MuteMicrophoneState, PRODUCT_ID, VENDOR_ID,
-    virtual_keyboard::VirtualKeyboard,
+    BacklightState, KeyboardState, MuteMicrophoneState, PRODUCT_ID, VENDOR_ID, control_secondary_display, toggle_secondary_display, virtual_keyboard::VirtualKeyboard
 };
 
 pub fn find_wired_keyboard() -> Option<DeviceInfo> {
@@ -23,6 +22,7 @@ pub fn wired_keyboard_thread(
     keyboard_state: &mut KeyboardState,
     virtual_keyboard: &mut VirtualKeyboard,
 ) {
+    control_secondary_display(false);
     let keyboard = keyboard.open().wait().unwrap();
     println!("Zenbook Duo Keyboard wired connected");
 
@@ -54,6 +54,7 @@ pub fn wired_keyboard_thread(
         match result.status {
             Err(TransferError::Disconnected) => {
                 println!("Wired keyboard disconnected");
+                control_secondary_display(true);
                 return;
             }
             Err(e) => {
@@ -64,33 +65,27 @@ pub fn wired_keyboard_thread(
                 // only one function key can be pressed at a time, this is a hardware limitation
                 // TODO: configurable mapping
                 if data == vec![90, 0, 0, 0, 0, 0] {
-                    println!("All function keys released");
                     virtual_keyboard.release_all_keys();
                 } else if data == vec![90, 199, 0, 0, 0, 0] {
-                    println!("Backlight key pressed");
                     keyboard_state.backlight = keyboard_state.backlight.next();
                     send_backlight_state(&keyboard, keyboard_state.backlight);
                 } else if data == vec![90, 16, 0, 0, 0, 0] {
-                    println!("Brightness down key pressed");
                     virtual_keyboard.release_prev_and_press_keys(&[EV_KEY::KEY_BRIGHTNESSDOWN]);
                 } else if data == vec![90, 32, 0, 0, 0, 0] {
-                    println!("Brightness up key pressed");
                     virtual_keyboard.release_prev_and_press_keys(&[EV_KEY::KEY_BRIGHTNESSUP]);
                 } else if data == vec![90, 156, 0, 0, 0, 0] {
                     println!("Swap up down display key pressed");
                 } else if data == vec![90, 124, 0, 0, 0, 0] {
-                    println!("Mute microphone key pressed");
                     keyboard_state.mute_microphone_led = keyboard_state.mute_microphone_led.next();
                     send_mute_microphone_state(&keyboard, keyboard_state.mute_microphone_led);
 
                     virtual_keyboard.release_prev_and_press_keys(&[EV_KEY::KEY_MICMUTE]);
                 } else if data == vec![90, 126, 0, 0, 0, 0] {
-                    println!("Emoji key pressed");
                     virtual_keyboard.release_prev_and_press_keys(&[EV_KEY::KEY_EMOJI_PICKER]);
                 } else if data == vec![90, 134, 0, 0, 0, 0] {
                     println!("MyASUS key pressed");
                 } else if data == vec![90, 106, 0, 0, 0, 0] {
-                    println!("Disable second display key pressed");
+                    // no-op when keyboard is wired
                 } else {
                     println!("[EP5] Unknown key pressed, {:?}", data);
                 }
