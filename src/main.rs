@@ -1,12 +1,20 @@
-use std::{fs, thread, time::Duration};
+use std::{
+    fs,
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
 
 use crate::{
     virtual_keyboard::VirtualKeyboard,
     wired_keyboard_thread::{find_wired_keyboard, wired_keyboard_thread},
 };
+use bt_keyboard_thread::bt_input_monitor_thread;
 use futures_lite::stream;
 use nusb::{hotplug::HotplugEvent, watch_devices};
 
+mod bt_keyboard_thread;
+mod deviceinfo;
 mod virtual_keyboard;
 mod wired_keyboard_thread;
 
@@ -16,13 +24,19 @@ pub const PRODUCT_ID: u16 = 0x1bf2;
 fn main() {
     env_logger::init();
 
+    let virtual_keyboard = Arc::new(Mutex::new(VirtualKeyboard::new()));
+    let keyboard_state = Arc::new(Mutex::new(KeyboardState::new()));
+
     thread::spawn(sync_backlight_thread);
 
-    let mut virtual_keyboard = VirtualKeyboard::new();
-    let mut keyboard_state = KeyboardState::new();
+    {
+        let keyboard_state = keyboard_state.clone();
+        let virtual_keyboard = virtual_keyboard.clone();
+        thread::spawn(move || bt_input_monitor_thread(keyboard_state, virtual_keyboard));
+    }
 
     if let Some(keyboard) = find_wired_keyboard() {
-        wired_keyboard_thread(keyboard, &mut keyboard_state, &mut virtual_keyboard);
+        wired_keyboard_thread(keyboard, keyboard_state.clone(), virtual_keyboard.clone());
     }
 
     for event in stream::block_on(watch_devices().unwrap()) {
@@ -31,7 +45,11 @@ fn main() {
                 if d.vendor_id() == VENDOR_ID && d.product_id() == PRODUCT_ID =>
             {
                 if let Some(keyboard) = find_wired_keyboard() {
-                    wired_keyboard_thread(keyboard, &mut keyboard_state, &mut virtual_keyboard);
+                    wired_keyboard_thread(
+                        keyboard,
+                        keyboard_state.clone(),
+                        virtual_keyboard.clone(),
+                    );
                 }
             }
             _ => {}
