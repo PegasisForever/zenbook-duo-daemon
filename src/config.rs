@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::PathBuf};
 
 use evdev_rs::enums::EV_KEY;
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,8 @@ pub enum KeyFunction {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
+    usb_vendor_id: String,
+    usb_product_id: String,
     pub keyboard_backlight_key: KeyFunction,
     pub brightness_down_key: KeyFunction,
     pub brightness_up_key: KeyFunction,
@@ -25,9 +27,21 @@ pub struct Config {
     pub toggle_secondary_display_key: KeyFunction,
 }
 
+impl Config {
+    pub fn vendor_id(&self) -> u16 {
+        u16::from_str_radix(&self.usb_vendor_id, 16).unwrap()
+    }
+
+    pub fn product_id(&self) -> u16 {
+        u16::from_str_radix(&self.usb_product_id, 16).unwrap()
+    }
+}
+
 impl Default for Config {
-    fn default() -> Self {  
+    fn default() -> Self {
         Self {
+            usb_vendor_id: "0b05".to_string(),
+            usb_product_id: "1bf2".to_string(),
             keyboard_backlight_key: KeyFunction::KeyboardBacklight(true),
             brightness_down_key: KeyFunction::KeyBind(vec![EV_KEY::KEY_BRIGHTNESSDOWN]),
             brightness_up_key: KeyFunction::KeyBind(vec![EV_KEY::KEY_BRIGHTNESSUP]),
@@ -40,10 +54,10 @@ impl Default for Config {
     }
 }
 
-const CONFIG_PATH: &str = "/etc/zenbook-duo-daemon/config.toml";
+pub const DEFAULT_CONFIG_PATH: &str = "/etc/zenbook-duo-daemon/config.toml";
 
 impl Config {
-    fn write_default_config() {
+    fn write_default_config(config_path: &PathBuf) {
         let config = Config::default();
         let config_str = toml::to_string(&config).unwrap();
         let help = "
@@ -59,18 +73,18 @@ impl Config {
         ".trim();
         let config_str = format!("{}\n\n\n{}", help, config_str);
 
-        let parent = std::path::Path::new(CONFIG_PATH).parent().unwrap();
+        let parent = config_path.parent().unwrap();
         if !parent.exists() {
             fs::create_dir_all(parent).unwrap();
         }
-        fs::write(CONFIG_PATH, config_str).unwrap();
+        fs::write(config_path, config_str).unwrap();
     }
 
-    pub fn read() -> Config {
-        if !fs::metadata(CONFIG_PATH).is_ok() {
-            Self::write_default_config();
+    pub fn read(config_path: &PathBuf) -> Config {
+        if !fs::metadata(config_path).is_ok() {
+            Self::write_default_config(config_path);
         }
-        let config_str = fs::read_to_string(CONFIG_PATH).unwrap();
+        let config_str = fs::read_to_string(config_path).unwrap();
         toml::from_str(&config_str).unwrap()
     }
 }

@@ -1,17 +1,29 @@
 use std::{
-    process, sync::{Arc, Mutex}, thread
+    path::PathBuf,
+    process,
+    sync::{Arc, Mutex},
+    thread,
 };
 
 use crate::{
-    config::Config,
+    config::{Config, DEFAULT_CONFIG_PATH},
     secondary_display::sync_secondary_display_brightness_thread,
     virtual_keyboard::VirtualKeyboard,
     wired_keyboard_thread::{find_wired_keyboard, wired_keyboard_thread},
 };
 use bt_keyboard_thread::bt_input_monitor_thread;
+use clap::Parser;
 use futures_lite::stream;
 use log::{info, warn};
 use nusb::{hotplug::HotplugEvent, watch_devices};
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Path to the config file, defaults to /etc/zenbook-duo-daemon/config.toml
+    #[arg(short, long)]
+    config_path: Option<PathBuf>,
+}
 
 mod bt_keyboard_thread;
 mod config;
@@ -19,13 +31,14 @@ mod secondary_display;
 mod virtual_keyboard;
 mod wired_keyboard_thread;
 
-pub const VENDOR_ID: u16 = 0x0b05;
-pub const PRODUCT_ID: u16 = 0x1bf2;
-
 fn main() {
     env_logger::init();
-
-    let config = Config::read();
+    let args = Args::parse();
+    let config = Config::read(
+        &args
+            .config_path
+            .unwrap_or(PathBuf::from(DEFAULT_CONFIG_PATH)),
+    );
 
     let virtual_keyboard = Arc::new(Mutex::new(VirtualKeyboard::new(&config)));
     let keyboard_state = Arc::new(Mutex::new(KeyboardState::new()));
@@ -39,7 +52,7 @@ fn main() {
         thread::spawn(move || bt_input_monitor_thread(&config, keyboard_state, virtual_keyboard));
     }
 
-    if let Some(keyboard) = find_wired_keyboard() {
+    if let Some(keyboard) = find_wired_keyboard(&config) {
         wired_keyboard_thread(
             &config,
             keyboard,
@@ -51,9 +64,9 @@ fn main() {
     for event in stream::block_on(watch_devices().unwrap()) {
         match event {
             HotplugEvent::Connected(d)
-                if d.vendor_id() == VENDOR_ID && d.product_id() == PRODUCT_ID =>
+                if d.vendor_id() == config.vendor_id() && d.product_id() == config.product_id() =>
             {
-                if let Some(keyboard) = find_wired_keyboard() {
+                if let Some(keyboard) = find_wired_keyboard(&config) {
                     wired_keyboard_thread(
                         &config,
                         keyboard,
@@ -110,8 +123,8 @@ pub fn parse_hex_string(hex_string: &str) -> Vec<u8> {
 pub fn execute_command(command: &str) {
     info!("Executing command: {}", command);
     let command = command.to_owned();
-    thread::spawn(move || {
-        match process::Command::new("sh").arg("-c").arg(&command).output() {
+    thread::spawn(
+        move || match process::Command::new("sh").arg("-c").arg(&command).output() {
             Ok(output) => {
                 info!(
                     "Command '{}' exited with status {}.\nstdout:\n{}\nstderr:\n{}",
@@ -124,6 +137,6 @@ pub fn execute_command(command: &str) {
             Err(e) => {
                 warn!("Failed to execute command '{}': {}", command, e);
             }
-        }
-    });
+        },
+    );
 }

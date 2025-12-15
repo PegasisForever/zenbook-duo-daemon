@@ -10,18 +10,18 @@ use nusb::{
 };
 
 use crate::{
-    BacklightState, KeyboardState, PRODUCT_ID, VENDOR_ID,
+    BacklightState, KeyboardState,
     config::{Config, KeyFunction},
     execute_command, parse_hex_string,
     secondary_display::control_secondary_display,
     virtual_keyboard::VirtualKeyboard,
 };
 
-pub fn find_wired_keyboard() -> Option<DeviceInfo> {
+pub fn find_wired_keyboard(config: &Config) -> Option<DeviceInfo> {
     nusb::list_devices()
         .wait()
         .unwrap()
-        .find(|d| d.vendor_id() == VENDOR_ID && d.product_id() == PRODUCT_ID)
+        .find(|d| d.vendor_id() == config.vendor_id() && d.product_id() == config.product_id())
 }
 
 pub fn wired_keyboard_thread(

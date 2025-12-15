@@ -4,7 +4,7 @@ use evdev_rs::{
 };
 use std::time::SystemTime;
 
-use crate::{PRODUCT_ID, VENDOR_ID, config::{Config, KeyFunction}};
+use crate::{config::{Config, KeyFunction}};
 
 pub enum KeyEventType {
     Release,
@@ -31,8 +31,8 @@ impl VirtualKeyboard {
 
         u.set_name("Zenbook Duo Daemon");
         u.set_bustype(BusType::BUS_VIRTUAL as u16);
-        u.set_vendor_id(VENDOR_ID);
-        u.set_product_id(PRODUCT_ID);
+        u.set_vendor_id(config.vendor_id());
+        u.set_product_id(config.product_id());
 
         let enable_key = |key_function: &KeyFunction| {
             if let KeyFunction::KeyBind(keys) = key_function {
