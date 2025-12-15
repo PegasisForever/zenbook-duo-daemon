@@ -62,6 +62,7 @@ pub fn wired_keyboard_thread(
             Ok(_) => {
                 let data = result.buffer.into_vec();
                 // only one function key can be pressed at a time, this is a hardware limitation
+                // TODO: configurable mapping
                 if data == vec![90, 0, 0, 0, 0, 0] {
                     println!("All function keys released");
                     virtual_keyboard.release_all_keys();
@@ -82,12 +83,7 @@ pub fn wired_keyboard_thread(
                     keyboard_state.mute_microphone_led = keyboard_state.mute_microphone_led.next();
                     send_mute_microphone_state(&keyboard, keyboard_state.mute_microphone_led);
 
-                    // virtual_keyboard.release_prev_and_press_keys(&[EV_KEY::KEY_MICMUTE]);
-                    virtual_keyboard.release_prev_and_press_keys(&[
-                        EV_KEY::KEY_LEFTCTRL,
-                        EV_KEY::KEY_LEFTSHIFT,
-                        EV_KEY::KEY_B,
-                    ]);
+                    virtual_keyboard.release_prev_and_press_keys(&[EV_KEY::KEY_MICMUTE]);
                 } else if data == vec![90, 126, 0, 0, 0, 0] {
                     println!("Emoji key pressed");
                     virtual_keyboard.release_prev_and_press_keys(&[EV_KEY::KEY_EMOJI_PICKER]);

@@ -43,12 +43,6 @@ impl VirtualKeyboard {
         u.enable(EventCode::EV_KEY(EV_KEY::KEY_MICMUTE)).unwrap();
         u.enable(EventCode::EV_KEY(EV_KEY::KEY_EMOJI_PICKER))
             .unwrap();
-        u.enable(EventCode::EV_KEY(EV_KEY::KEY_LEFTCTRL))
-            .unwrap();
-        u.enable(EventCode::EV_KEY(EV_KEY::KEY_LEFTSHIFT))
-            .unwrap();
-        u.enable(EventCode::EV_KEY(EV_KEY::KEY_B))
-            .unwrap();
 
         Self {
             device: UInputDevice::create_from_device(&u).unwrap(),
