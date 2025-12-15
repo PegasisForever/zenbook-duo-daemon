@@ -1,3 +1,3 @@
 ```
-sudo apt install libevdev-dev pkg-config autoconf
+sudo apt install libevdev-dev libdbus-1-dev pkg-config autoconf
 ```

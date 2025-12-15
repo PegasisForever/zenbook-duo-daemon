@@ -11,8 +11,9 @@ use evdev_rs::{
     enums::{EV_ABS, EV_KEY, EventCode},
 };
 use inotify::{Inotify, WatchMask};
+use log::{debug, info, warn};
 
-use crate::{KeyboardState, toggle_secondary_display, virtual_keyboard::VirtualKeyboard};
+use crate::{KeyboardState, secondary_display::toggle_secondary_display, virtual_keyboard::VirtualKeyboard};
 
 pub fn bt_input_monitor_thread(
     keyboard_state: Arc<Mutex<KeyboardState>>,
@@ -87,7 +88,7 @@ pub fn bt_keyboard_thread(
     keyboard_state: Arc<Mutex<KeyboardState>>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
 ) {
-    println!("Starting BT keyboard thread for {}", path.display());
+    info!("Bluetooth connected on {}", path.display());
 
     loop {
         let event = keyboard.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING);
@@ -96,27 +97,33 @@ pub fn bt_keyboard_thread(
             Ok((_status, event)) => {
                 if event.event_code == EventCode::EV_ABS(EV_ABS::ABS_MISC) {
                     if event.value == 0 {
-                        // no key pressed
+                        debug!("No key pressed");
+
                         virtual_keyboard.lock().unwrap().release_all_keys();
                     } else if event.value == 199 {
-                        // keyboard backlight key pressed
-                        println!("Backlight key pressed");
+                        debug!("Backlight key pressed");
+
+                        // TODO: control keyboard backlight
                     } else if event.value == 16 {
-                        // brightness down key pressed
+                        debug!("Brightness down key pressed");
+
                         virtual_keyboard
                             .lock()
                             .unwrap()
                             .release_prev_and_press_keys(&[EV_KEY::KEY_BRIGHTNESSDOWN]);
                     } else if event.value == 32 {
-                        // brightness up key pressed
+                        debug!("Brightness up key pressed");
+
                         virtual_keyboard
                             .lock()
                             .unwrap()
                             .release_prev_and_press_keys(&[EV_KEY::KEY_BRIGHTNESSUP]);
                     } else if event.value == 156 {
-                        println!("Swap up down display key pressed");
+                        debug!("Swap up down display key pressed");
+
                     } else if event.value == 124 {
-                        // microphone mute key pressed
+                        debug!("Microphone mute key pressed");
+
                         let mut keyboard_state = keyboard_state.lock().unwrap();
                         keyboard_state.mute_microphone_led =
                             keyboard_state.mute_microphone_led.next();
@@ -127,18 +134,21 @@ pub fn bt_keyboard_thread(
                             .unwrap()
                             .release_prev_and_press_keys(&[EV_KEY::KEY_MICMUTE]);
                     } else if event.value == 126 {
-                        println!("Emoji picker key pressed");
+                        debug!("Emoji picker key pressed");
+
                         virtual_keyboard
                             .lock()
                             .unwrap()
                             .release_prev_and_press_keys(&[EV_KEY::KEY_EMOJI_PICKER]);
                     } else if event.value == 134 {
-                        println!("MyASUS key pressed");
+                        debug!("MyASUS key pressed");
+
                     } else if event.value == 106 {
-                        // toggle secondary display key pressed
+                        debug!("Toggle secondary display key pressed");
+
                         toggle_secondary_display();
                     } else {
-                        println!("[BT] Unknown key pressed: {:?}", event);
+                        debug!("Unknown key pressed: {:?}", event);
                     }
                 }
             }
@@ -147,10 +157,10 @@ pub fn bt_keyboard_thread(
             }
             Err(e) => {
                 if !path.exists() {
-                    println!("Event file disappeared. Exiting BT keyboard thread.");
+                    info!("Event file disappeared. Exiting thread.");
                     return;
                 } else {
-                    println!("Failed to read event: {:?}", e);
+                    warn!("Failed to read event: {:?}", e);
                 }
             }
         }
