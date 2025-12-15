@@ -1,6 +1,6 @@
 # ASUS Zenbook Duo Daemon
 
-This is a daemon that runs on the Zenbook Duo laptop to handle the keyboard and secondary display.
+This is a daemon that runs on the Zenbook Duo laptop to handle the keyboard and secondary display under linux.
 
 ## Device Support
 
