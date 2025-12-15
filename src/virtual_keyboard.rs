@@ -4,7 +4,7 @@ use evdev_rs::{
 };
 use std::time::SystemTime;
 
-use crate::{PRODUCT_ID, VENDOR_ID};
+use crate::{PRODUCT_ID, VENDOR_ID, config::{Config, KeyFunction}};
 
 pub enum KeyEventType {
     Release,
@@ -26,7 +26,7 @@ pub struct VirtualKeyboard {
 }
 
 impl VirtualKeyboard {
-    pub fn new() -> Self {
+    pub fn new(config: &Config) -> Self {
         let u = UninitDevice::new().unwrap();
 
         u.set_name("Zenbook Duo Daemon");
@@ -34,13 +34,21 @@ impl VirtualKeyboard {
         u.set_vendor_id(VENDOR_ID);
         u.set_product_id(PRODUCT_ID);
 
-        u.enable(EventCode::EV_KEY(EV_KEY::KEY_BRIGHTNESSDOWN))
-            .unwrap();
-        u.enable(EventCode::EV_KEY(EV_KEY::KEY_BRIGHTNESSUP))
-            .unwrap();
-        u.enable(EventCode::EV_KEY(EV_KEY::KEY_MICMUTE)).unwrap();
-        u.enable(EventCode::EV_KEY(EV_KEY::KEY_EMOJI_PICKER))
-            .unwrap();
+        let enable_key = |key_function: &KeyFunction| {
+            if let KeyFunction::KeyBind(keys) = key_function {
+                for key in keys {
+                    u.enable(EventCode::EV_KEY(*key)).unwrap();
+                }
+            }
+        };
+        enable_key(&config.keyboard_backlight_key);
+        enable_key(&config.brightness_down_key);
+        enable_key(&config.brightness_up_key);
+        enable_key(&config.swap_up_down_display_key);
+        enable_key(&config.microphone_mute_key);
+        enable_key(&config.emoji_picker_key);
+        enable_key(&config.myasus_key);
+        enable_key(&config.toggle_secondary_display_key);
 
         Self {
             device: UInputDevice::create_from_device(&u).unwrap(),

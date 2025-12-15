@@ -3,7 +3,6 @@ use std::{
     time::Duration,
 };
 
-use evdev_rs::enums::EV_KEY;
 use log::{debug, info, warn};
 use nusb::{
     Device, DeviceInfo, MaybeFuture as _,
@@ -11,7 +10,11 @@ use nusb::{
 };
 
 use crate::{
-    BacklightState, KeyboardState, MuteMicrophoneState, PRODUCT_ID, VENDOR_ID, parse_hex_string, secondary_display::control_secondary_display, virtual_keyboard::VirtualKeyboard
+    BacklightState, KeyboardState, PRODUCT_ID, VENDOR_ID,
+    config::{Config, KeyFunction},
+    execute_command, parse_hex_string,
+    secondary_display::control_secondary_display,
+    virtual_keyboard::VirtualKeyboard,
 };
 
 pub fn find_wired_keyboard() -> Option<DeviceInfo> {
@@ -22,6 +25,7 @@ pub fn find_wired_keyboard() -> Option<DeviceInfo> {
 }
 
 pub fn wired_keyboard_thread(
+    config: &Config,
     keyboard: DeviceInfo,
     keyboard_state: Arc<Mutex<KeyboardState>>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
@@ -52,8 +56,25 @@ pub fn wired_keyboard_thread(
     {
         let keyboard_state = keyboard_state.lock().unwrap();
         send_backlight_state(&keyboard, keyboard_state.backlight);
-        send_mute_microphone_state(&keyboard, keyboard_state.mute_microphone_led);
     }
+
+    let execute_key_function = |key_function: &KeyFunction| match key_function {
+        KeyFunction::KeyboardBacklight(true) => {
+            let mut keyboard_state = keyboard_state.lock().unwrap();
+            keyboard_state.backlight = keyboard_state.backlight.next();
+            send_backlight_state(&keyboard, keyboard_state.backlight);
+        }
+        KeyFunction::KeyBind(items) => {
+            virtual_keyboard
+                .lock()
+                .unwrap()
+                .release_prev_and_press_keys(items);
+        }
+        KeyFunction::Command(command) => {
+            execute_command(command);
+        }
+        _ => {}
+    };
 
     loop {
         let buffer = endpoint_5.allocate(64);
@@ -61,6 +82,7 @@ pub fn wired_keyboard_thread(
         match result.status {
             Err(TransferError::Disconnected) => {
                 info!("USB disconnected");
+                virtual_keyboard.lock().unwrap().release_all_keys();
                 control_secondary_display(true);
                 return;
             }
@@ -69,53 +91,36 @@ pub fn wired_keyboard_thread(
             }
             Ok(_) => {
                 let data = result.buffer.into_vec();
-                // only one function key can be pressed at a time, this is a hardware limitation
-                // TODO: configurable mapping
+                // Only one function key can be pressed at a time, this is a hardware limitation
                 if data == vec![90, 0, 0, 0, 0, 0] {
                     debug!("No key pressed");
                     virtual_keyboard.lock().unwrap().release_all_keys();
                 } else if data == vec![90, 199, 0, 0, 0, 0] {
                     debug!("Backlight key pressed");
-                    let mut keyboard_state = keyboard_state.lock().unwrap();
-                    keyboard_state.backlight = keyboard_state.backlight.next();
-                    send_backlight_state(&keyboard, keyboard_state.backlight);
+                    execute_key_function(&config.keyboard_backlight_key);
                 } else if data == vec![90, 16, 0, 0, 0, 0] {
                     debug!("Brightness down key pressed");
-                    virtual_keyboard
-                        .lock()
-                        .unwrap()
-                        .release_prev_and_press_keys(&[EV_KEY::KEY_BRIGHTNESSDOWN]);
+                    execute_key_function(&config.brightness_down_key);
                 } else if data == vec![90, 32, 0, 0, 0, 0] {
                     debug!("Brightness up key pressed");
-                    virtual_keyboard
-                        .lock()
-                        .unwrap()
-                        .release_prev_and_press_keys(&[EV_KEY::KEY_BRIGHTNESSUP]);
+                    execute_key_function(&config.brightness_up_key);
                 } else if data == vec![90, 156, 0, 0, 0, 0] {
                     debug!("Swap up down display key pressed");
+                    execute_key_function(&config.swap_up_down_display_key);
                 } else if data == vec![90, 124, 0, 0, 0, 0] {
                     debug!("Microphone mute key pressed");
-                    let mut keyboard_state = keyboard_state.lock().unwrap();
-                    keyboard_state.mute_microphone_led = keyboard_state.mute_microphone_led.next();
-                    send_mute_microphone_state(&keyboard, keyboard_state.mute_microphone_led);
-
-                    virtual_keyboard
-                        .lock()
-                        .unwrap()
-                        .release_prev_and_press_keys(&[EV_KEY::KEY_MICMUTE]);
+                    execute_key_function(&config.microphone_mute_key);
                 } else if data == vec![90, 126, 0, 0, 0, 0] {
                     debug!("Emoji picker key pressed");
-                    virtual_keyboard
-                        .lock()
-                        .unwrap()
-                        .release_prev_and_press_keys(&[EV_KEY::KEY_EMOJI_PICKER]);
+                    execute_key_function(&config.emoji_picker_key);
                 } else if data == vec![90, 134, 0, 0, 0, 0] {
                     debug!("MyASUS key pressed");
+                    execute_key_function(&config.myasus_key);
                 } else if data == vec![90, 106, 0, 0, 0, 0] {
-                    debug!("Toggle secondary display key pressed");
-                    // no-op when keyboard is wired
+                    debug!("Toggle secondary display key pressed, no-op when keyboard is wired");
                 } else {
                     debug!("Unknown key pressed: {:?}", data);
+                    virtual_keyboard.lock().unwrap().release_all_keys();
                 }
             }
         }
@@ -146,10 +151,12 @@ fn send_backlight_state(keyboard: &Device, state: BacklightState) {
         .unwrap();
 }
 
-fn send_mute_microphone_state(keyboard: &Device, state: MuteMicrophoneState) {
-    let data = match state {
-        MuteMicrophoneState::Muted => parse_hex_string("5ad07c01000000000000000000000000"),
-        MuteMicrophoneState::Unmuted => parse_hex_string("5ad07c00000000000000000000000000"),
+fn send_mute_microphone_state(keyboard: &Device, state: bool) {
+    let data = if state {
+        // turn on microphone mute led
+        parse_hex_string("5ad07c01000000000000000000000000")
+    } else {
+        parse_hex_string("5ad07c00000000000000000000000000")
     };
 
     keyboard
@@ -167,4 +174,3 @@ fn send_mute_microphone_state(keyboard: &Device, state: MuteMicrophoneState) {
         .wait()
         .unwrap();
 }
-
