@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[derive(Clone, Copy, Debug)]
 pub enum BacklightState {
@@ -31,13 +32,13 @@ struct InnerState {
 /// Shared state manager that maintains keyboard state across attach/detach cycles
 #[derive(Clone)]
 pub struct KeyboardStateManager {
-    state: Arc<Mutex<InnerState>>,
+    state: Arc<RwLock<InnerState>>,
 }
 
 impl KeyboardStateManager {
     pub fn new(is_usb_attached: bool) -> Self {
         Self {
-            state: Arc::new(Mutex::new(InnerState {
+            state: Arc::new(RwLock::new(InnerState {
                 backlight: BacklightState::Low,
                 mic_mute_led: false,
                 is_suspended: false,
@@ -48,8 +49,8 @@ impl KeyboardStateManager {
     }
     
     /// Get actual backlight state - returns Off if suspended, otherwise returns the actual state
-    pub fn get_backlight(&self) -> BacklightState {
-        let state = self.state.lock().unwrap();
+    pub async fn get_backlight(&self) -> BacklightState {
+        let state = self.state.read().await;
         if state.is_suspended {
             BacklightState::Off
         } else {
@@ -57,20 +58,15 @@ impl KeyboardStateManager {
         }
     }
     
-    /// Get raw backlight state (ignoring suspended flag) - used for resume restoration
-    pub fn get_backlight_raw(&self) -> BacklightState {
-        self.state.lock().unwrap().backlight
-    }
-    
-    pub fn set_backlight(&self, new_state: BacklightState) {
-        let mut state = self.state.lock().unwrap();
+    pub async fn set_backlight(&self, new_state: BacklightState) {
+        let mut state: tokio::sync::RwLockWriteGuard<'_, InnerState> = self.state.write().await;
         // Always update the state (even when suspended, to preserve for resume)
         state.backlight = new_state;
     }
     
     /// Get actual mic mute LED state - returns false if suspended, otherwise returns the actual state
-    pub fn get_mic_mute_led(&self) -> bool {
-        let state = self.state.lock().unwrap();
+    pub async fn get_mic_mute_led(&self) -> bool {
+        let state = self.state.read().await;
         if state.is_suspended {
             false
         } else {
@@ -78,42 +74,37 @@ impl KeyboardStateManager {
         }
     }
     
-    /// Get raw mic mute LED state (ignoring suspended flag) - used for resume restoration
-    pub fn get_mic_mute_led_raw(&self) -> bool {
-        self.state.lock().unwrap().mic_mute_led
-    }
-    
-    pub fn set_mic_mute_led(&self, new_state: bool) {
-        let mut state = self.state.lock().unwrap();
+    pub async fn set_mic_mute_led(&self, new_state: bool) {
+        let mut state = self.state.write().await;
         // Always update the state (even when suspended, to preserve for resume)
         state.mic_mute_led = new_state;
     }
     
     /// Set the suspended state
-    pub fn set_suspended(&self, suspended: bool) {
-        let mut state = self.state.lock().unwrap();
+    pub async fn set_suspended(&self, suspended: bool) {
+        let mut state = self.state.write().await;
         state.is_suspended = suspended;
     }
     
     /// Get the USB attached state
-    pub fn is_usb_attached(&self) -> bool {
-        self.state.lock().unwrap().is_usb_attached
+    pub async fn is_usb_attached(&self) -> bool {
+        self.state.read().await.is_usb_attached
     }
     
     /// Set the USB attached state
-    pub fn set_usb_attached(&self, attached: bool) {
-        let mut state = self.state.lock().unwrap();
+    pub async fn set_usb_attached(&self, attached: bool) {
+        let mut state = self.state.write().await;
         state.is_usb_attached = attached;
     }
     
     /// Get the secondary display enabled state
-    pub fn is_secondary_display_enabled(&self) -> bool {
-        self.state.lock().unwrap().is_secondary_display_enabled
+    pub async fn is_secondary_display_enabled(&self) -> bool {
+        self.state.read().await.is_secondary_display_enabled
     }
     
     /// Set the secondary display enabled state
-    pub fn set_secondary_display_enabled(&self, enabled: bool) {
-        let mut state = self.state.lock().unwrap();
+    pub async fn set_secondary_display_enabled(&self, enabled: bool) {
+        let mut state = self.state.write().await;
         state.is_secondary_display_enabled = enabled;
     }
 }

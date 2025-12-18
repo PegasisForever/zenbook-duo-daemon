@@ -1,24 +1,24 @@
 use log::{info, warn};
 use nix::sys::stat;
 use nix::unistd;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Lines};
 use std::path::PathBuf;
-use std::thread;
-use std::sync::mpmc;
+use tokio::fs;
+use tokio::fs::File;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::broadcast;
 
 use crate::config::Config;
 use crate::events::Event;
 use crate::state::BacklightState;
 
 pub struct UnixPipe {
-    lines: Lines<BufReader<File>>,
+    reader: BufReader<File>,
 }
 
 impl UnixPipe {
-    pub fn new(path: &PathBuf) -> Self {
-        if path.exists() {
-            std::fs::remove_file(path).unwrap();
+    pub async fn new(path: &PathBuf) -> Self {
+        if fs::try_exists(path).await.unwrap_or(false) {
+            fs::remove_file(path).await.unwrap();
             info!("Removed existing pipe file");
         }
 
@@ -34,28 +34,34 @@ impl UnixPipe {
         )
         .unwrap();
 
-        let file = File::open(path).unwrap();
+        let file = File::open(path).await.unwrap();
         let reader = BufReader::new(file);
-        let lines = reader.lines();
-        Self { lines }
+        Self { reader }
     }
 
     /// Blocks until a command is received.
     /// If returns None, the pipe has been closed.
-    pub fn receive_next_command(&mut self) -> Option<String> {
-        self.lines.next().and_then(|r| r.ok())
+    pub async fn receive_next_command(&mut self) -> Option<String> {
+        loop {
+            let mut line = String::new();
+            match self.reader.read_line(&mut line).await {
+                Ok(0) => {
+                    // EOF
+                    continue;
+                }
+                Ok(_) => return Some(line.trim_end().to_string()),
+                Err(_) => return None,
+            }
+        }
     }
 }
 
-pub fn start_receive_commands_thread(
-    config: &Config,
-    event_sender: mpmc::Sender<Event>,
-) {
+pub fn start_receive_commands_task(config: &Config, event_sender: broadcast::Sender<Event>) {
     let path = PathBuf::from(&config.pipe_path);
-    thread::spawn(move || {
-        let mut pipe = UnixPipe::new(&path);
+    tokio::spawn(async move {
+        let mut pipe = UnixPipe::new(&path).await;
         loop {
-            if let Some(line) = pipe.receive_next_command() {
+            if let Some(line) = pipe.receive_next_command().await {
                 match line.as_str() {
                     "suspend" => {
                         event_sender.send(Event::LaptopSuspend).ok();
@@ -101,7 +107,7 @@ pub fn start_receive_commands_thread(
                 }
             } else {
                 warn!("Pipe closed unexpectedly, recreating...");
-                pipe = UnixPipe::new(&path);
+                pipe = UnixPipe::new(&path).await;
             }
         }
     });

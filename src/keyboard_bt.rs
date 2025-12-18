@@ -1,11 +1,9 @@
 use std::{
     io::ErrorKind,
     path::PathBuf,
-    sync::{Arc, Mutex},
-    thread,
+    sync::Arc,
     time::Duration,
 };
-use std::sync::mpmc;
 
 use evdev_rs::{
     Device, DeviceWrapper as _, ReadFlag,
@@ -13,58 +11,73 @@ use evdev_rs::{
 };
 use inotify::{Inotify, WatchMask};
 use log::{debug, info, warn};
+use tokio::fs;
+use tokio::sync::{broadcast, Mutex};
+use futures::stream::StreamExt;
 
 use crate::{
     config::Config, events::Event, state::KeyboardStateManager, virtual_keyboard::VirtualKeyboard,
 };
 
-pub fn start_bt_keyboard_monitor_thread(
+pub fn start_bt_keyboard_monitor_task(
     config: &Config,
-    event_sender: mpmc::Sender<Event>,
-    event_receiver: mpmc::Receiver<Event>,
+    event_sender: broadcast::Sender<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
-    for entry in std::fs::read_dir("/dev/input").unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        try_start_bt_keyboard_thread(
-            config,
-            path,
-            event_sender.clone(),
-            event_receiver.clone(),
-            virtual_keyboard.clone(),
-            state_manager.clone(),
-        );
-    }
+    // First, check existing devices
+    let config_clone = config.clone();
+    let event_sender_clone = event_sender.clone();
+    let virtual_keyboard_clone = virtual_keyboard.clone();
+    let state_manager_clone = state_manager.clone();
+    
+    tokio::spawn(async move {
+        // Check existing devices using async read_dir
+        let mut entries = match fs::read_dir("/dev/input").await {
+            Ok(entries) => entries,
+            Err(e) => {
+                warn!("Failed to read /dev/input: {}", e);
+                return;
+            }
+        };
+        
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let path = entry.path();
+            try_start_bt_keyboard_task(
+                &config_clone,
+                path,
+                event_sender_clone.clone(),
+                event_sender_clone.subscribe(),
+                virtual_keyboard_clone.clone(),
+                state_manager_clone.clone(),
+            ).await;
+        }
 
-    let mut inotify = Inotify::init().unwrap();
-    inotify
-        .watches()
-        .add("/dev/input/", WatchMask::CREATE)
-        .unwrap();
+        // Watch for new devices using async inotify
+        let inotify = Inotify::init().expect("Failed to initialize inotify");
+        inotify
+            .watches()
+            .add("/dev/input/", WatchMask::CREATE)
+            .expect("Failed to add inotify watch");
 
-    let config = config.clone();
-    thread::spawn(move || {
         let mut buffer = [0; 1024];
+        let mut stream = inotify.into_event_stream(&mut buffer).unwrap();
 
-        loop {
-            let events = inotify.read_events_blocking(&mut buffer).unwrap();
-
-            for event in events {
+        while let Some(event_result) = stream.next().await {
+            if let Ok(event) = event_result {
                 if let Some(name) = event.name {
                     if event.mask.contains(inotify::EventMask::CREATE) {
                         if name.to_str().unwrap_or("").starts_with("event") {
                             let path = PathBuf::from("/dev/input/").join(name);
-                            // there may be multiple event files for the same keyboard, so multiple threads may be started
-                            try_start_bt_keyboard_thread(
-                                &config,
+                            // there may be multiple event files for the same keyboard, so multiple tasks may be started
+                            try_start_bt_keyboard_task(
+                                &config_clone,
                                 path,
-                                event_sender.clone(),
-                                event_receiver.clone(),
-                                virtual_keyboard.clone(),
-                                state_manager.clone(),
-                            );
+                                event_sender_clone.clone(),
+                                event_sender_clone.subscribe(),
+                                virtual_keyboard_clone.clone(),
+                                state_manager_clone.clone(),
+                            ).await;
                         }
                     }
                 }
@@ -73,17 +86,23 @@ pub fn start_bt_keyboard_monitor_thread(
     });
 }
 
-fn try_start_bt_keyboard_thread(
+async fn try_start_bt_keyboard_task(
     config: &Config,
     path: PathBuf,
-    event_sender: mpmc::Sender<Event>,
-    event_receiver: mpmc::Receiver<Event>,
+    event_sender: broadcast::Sender<Event>,
+    event_receiver: broadcast::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
-    if path.is_dir() {
+    // Check if path is a directory using async metadata
+    if let Ok(metadata) = fs::metadata(&path).await {
+        if metadata.is_dir() {
+            return;
+        }
+    } else {
         return;
     }
+    
     if let Some(fname) = path.file_name().and_then(|n| n.to_str()) {
         if !fname.starts_with("event") {
             return;
@@ -92,10 +111,16 @@ fn try_start_bt_keyboard_thread(
         return;
     }
 
-    if let Ok(input) = evdev_rs::Device::new_from_path(&path) {
+    // evdev operations need to be done in a blocking context
+    let path_clone = path.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        evdev_rs::Device::new_from_path(&path_clone)
+    }).await;
+
+    if let Ok(Ok(input)) = result {
         // This name only matches when the keyboard is connected via Bluetooth, which is desired.
         if input.name() == Some("ASUS Zenbook Duo Keyboard") {
-            start_bt_keyboard_thread(
+            start_bt_keyboard_task(
                 config,
                 path,
                 input,
@@ -108,61 +133,58 @@ fn try_start_bt_keyboard_thread(
     }
 }
 
-pub fn start_bt_keyboard_thread(
+pub fn start_bt_keyboard_task(
     config: &Config,
     path: PathBuf,
     keyboard: Device,
-    event_sender: mpmc::Sender<Event>,
-    event_receiver: mpmc::Receiver<Event>,
+    event_sender: broadcast::Sender<Event>,
+    mut event_receiver: broadcast::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
     info!("Bluetooth connected on {}", path.display());
 
-    // Spawn a thread to handle backlight events
+    // Create a cancellation token for the control task
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    // Spawn a task to handle backlight events
     let state_manager_control = state_manager.clone();
-    let (shutdown_sender, shutdown_receiver) = mpmc::sync_channel::<()>(0);
-    thread::spawn(move || {
+    tokio::spawn(async move {
         loop {
-            // Check for shutdown signal first (non-blocking)
-            match shutdown_receiver.try_recv() {
-                Ok(_) | Err(mpmc::TryRecvError::Disconnected) => {
-                    // Shutdown signal received, exit
-                    info!("Bluetooth control thread shutting down");
+            tokio::select! {
+                _ = &mut shutdown_rx => {
+                    info!("Bluetooth control task shutting down");
                     break;
                 }
-                Err(mpmc::TryRecvError::Empty) => {
-                    // No shutdown signal, try to receive event with timeout to check shutdown periodically
-                    match event_receiver.recv_timeout(Duration::from_millis(500)) {
+                result = event_receiver.recv() => {
+                    match result {
                         Ok(event) => {
                             match event {
                                 Event::BacklightToggle => {
-                                    let new_state = state_manager_control.get_backlight().next();
-                                    state_manager_control.set_backlight(new_state);
+                                    let new_state = state_manager_control.get_backlight().await.next();
+                                    state_manager_control.set_backlight(new_state).await;
                                     // TODO: Send backlight state to keyboard
                                 }
                                 Event::Backlight(state) => {
-                                    state_manager_control.set_backlight(state);
+                                    state_manager_control.set_backlight(state).await;
                                     // TODO: Send backlight state to keyboard
                                 }
                                 Event::MicMuteLedToggle => {
-                                    let new_state = !state_manager_control.get_mic_mute_led();
-                                    state_manager_control.set_mic_mute_led(new_state);
+                                    let new_state = !state_manager_control.get_mic_mute_led().await;
+                                    state_manager_control.set_mic_mute_led(new_state).await;
                                     // TODO: Send microphone mute state to keyboard
                                 }
                                 Event::MicMuteLed(enabled) => {
-                                    state_manager_control.set_mic_mute_led(enabled);
+                                    state_manager_control.set_mic_mute_led(enabled).await;
                                     // TODO: Send microphone mute state to keyboard
                                 }
                                 _ => {}
                             }
                         }
-                        Err(mpmc::RecvTimeoutError::Timeout) => {
-                            // Timeout - continue loop to check shutdown again
+                        Err(broadcast::error::RecvError::Lagged(_)) => {
                             continue;
                         }
-                        Err(_) => {
-                            // Event receiver closed, exit
+                        Err(broadcast::error::RecvError::Closed) => {
                             break;
                         }
                     }
@@ -172,76 +194,97 @@ pub fn start_bt_keyboard_thread(
     });
 
     let config = config.clone();
-    thread::spawn(move || {
+    // Use spawn_blocking for the evdev read loop since it's a blocking operation
+    let keyboard = Arc::new(std::sync::Mutex::new(keyboard));
+    tokio::spawn(async move {
         loop {
-            let event = keyboard.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING);
-    
-            match event {
-                Ok((_status, event)) => {
+            let keyboard_clone = keyboard.clone();
+            
+            // Run the blocking evdev read in a blocking thread
+            let result = tokio::task::spawn_blocking(move || {
+                let kb = keyboard_clone.lock().unwrap();
+                kb.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING)
+            }).await;
+            
+            match result {
+                Ok(Ok((_status, event))) => {
                     // Only one function key can be pressed at a time, this is a hardware limitation
                     if event.event_code == EventCode::EV_ABS(EV_ABS::ABS_MISC) {
                         if event.value == 0 {
                             debug!("No key pressed");
-                            virtual_keyboard.lock().unwrap().release_all_keys();
+                            virtual_keyboard.lock().await.release_all_keys();
                         } else if event.value == 199 {
                             debug!("Backlight key pressed");
                             config
                                 .keyboard_backlight_key
-                                .execute(&virtual_keyboard, &event_sender);
+                                .execute(&virtual_keyboard, &event_sender)
+                                .await;
                         } else if event.value == 16 {
                             debug!("Brightness down key pressed");
                             config
                                 .brightness_down_key
-                                .execute(&virtual_keyboard, &event_sender);
+                                .execute(&virtual_keyboard, &event_sender)
+                                .await;
                         } else if event.value == 32 {
                             debug!("Brightness up key pressed");
                             config
                                 .brightness_up_key
-                                .execute(&virtual_keyboard, &event_sender);
+                                .execute(&virtual_keyboard, &event_sender)
+                                .await;
                         } else if event.value == 156 {
                             debug!("Swap up down display key pressed");
                             config
                                 .swap_up_down_display_key
-                                .execute(&virtual_keyboard, &event_sender);
+                                .execute(&virtual_keyboard, &event_sender)
+                                .await;
                         } else if event.value == 124 {
                             debug!("Microphone mute key pressed");
                             config
                                 .microphone_mute_key
-                                .execute(&virtual_keyboard, &event_sender);
+                                .execute(&virtual_keyboard, &event_sender)
+                                .await;
                         } else if event.value == 126 {
                             debug!("Emoji picker key pressed");
                             config
                                 .emoji_picker_key
-                                .execute(&virtual_keyboard, &event_sender);
+                                .execute(&virtual_keyboard, &event_sender)
+                                .await;
                         } else if event.value == 134 {
                             debug!("MyASUS key pressed");
-                            config.myasus_key.execute(&virtual_keyboard, &event_sender);
+                            config.myasus_key.execute(&virtual_keyboard, &event_sender).await;
                         } else if event.value == 106 {
                             debug!("Toggle secondary display key pressed");
                             config
                                 .toggle_secondary_display_key
-                                .execute(&virtual_keyboard, &event_sender);
+                                .execute(&virtual_keyboard, &event_sender)
+                                .await;
                         } else {
                             debug!("Unknown key pressed: {:?}", event);
-                            virtual_keyboard.lock().unwrap().release_all_keys();
+                            virtual_keyboard.lock().await.release_all_keys();
                         }
                     }
                 }
-                Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(50));
+                Ok(Err(e)) if e.kind() == ErrorKind::WouldBlock => {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
                 }
-                Err(e) => {
-                    if !path.exists() {
-                        info!("Event file disappeared. Exiting thread.");
-                        virtual_keyboard.lock().unwrap().release_all_keys();
-                        shutdown_sender.send(()).ok();
+                Ok(Err(e)) => {
+                    // Check if path exists using async fs
+                    if !fs::try_exists(&path).await.unwrap_or(false) {
+                        info!("Event file disappeared. Exiting task.");
+                        virtual_keyboard.lock().await.release_all_keys();
+                        drop(shutdown_tx);
                         return;
                     } else {
                         warn!("Failed to read event: {:?}", e);
                     }
                 }
+                Err(e) => {
+                    warn!("spawn_blocking error: {:?}", e);
+                    virtual_keyboard.lock().await.release_all_keys();
+                    drop(shutdown_tx);
+                    return;
+                }
             }
         }
     });
-    
 }

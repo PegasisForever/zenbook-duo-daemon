@@ -1,5 +1,5 @@
 use crate::state::BacklightState;
-use std::sync::mpmc;
+use tokio::sync::broadcast;
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -19,21 +19,20 @@ pub enum Event {
 
 /// Event bus for distributing events to consumers
 pub struct EventBus {
-    sender: mpmc::Sender<Event>,
-    receiver: mpmc::Receiver<Event>,
+    sender: broadcast::Sender<Event>,
 }
 
 impl EventBus {
     pub fn new() -> Self {
-        let (sender, receiver) = mpmc::channel();
-        Self { sender, receiver }
+        let (sender, _) = broadcast::channel(64);
+        Self { sender }
     }
 
-    pub fn sender(&self) -> mpmc::Sender<Event> {
+    pub fn sender(&self) -> broadcast::Sender<Event> {
         self.sender.clone()
     }
 
-    pub fn receiver(&self) -> mpmc::Receiver<Event> {
-        self.receiver.clone()
+    pub fn receiver(&self) -> broadcast::Receiver<Event> {
+        self.sender.subscribe()
     }
 }

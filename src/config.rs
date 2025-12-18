@@ -1,7 +1,8 @@
-use std::{fs, path::PathBuf, sync::{Arc, Mutex}};
+use std::{path::PathBuf, sync::Arc};
+use tokio::fs;
+use tokio::sync::{broadcast, Mutex};
 
 use evdev_rs::enums::EV_KEY;
-use log::debug;
 use serde::{Deserialize, Serialize};
 
 // All the enum carries a value so the serialized toml looks better
@@ -16,16 +17,16 @@ pub enum KeyFunction {
 
 impl KeyFunction {
     /// Execute a key function - handles KeyBind, Command, KeyboardBacklight, and ToggleSecondaryDisplay
-    pub fn execute(
+    pub async fn execute(
         &self,
         virtual_keyboard: &Arc<Mutex<crate::virtual_keyboard::VirtualKeyboard>>,
-        event_sender: &std::sync::mpmc::Sender<crate::events::Event>,
+        event_sender: &broadcast::Sender<crate::events::Event>,
     ) {
         match self {
             KeyFunction::KeyBind(items) => {
                 virtual_keyboard
                     .lock()
-                    .unwrap()
+                    .await
                     .release_prev_and_press_keys(items);
             }
             KeyFunction::Command(command) => {
@@ -96,7 +97,7 @@ impl Default for Config {
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/zenbook-duo-daemon/config.toml";
 
 impl Config {
-    pub fn write_default_config(config_path: &PathBuf) {
+    pub async fn write_default_config(config_path: &PathBuf) {
         let config = Config::default();
         let config_str = toml::to_string(&config).unwrap();
         let help = "
@@ -113,26 +114,27 @@ impl Config {
         let config_str = format!("{}\n\n\n{}", help, config_str);
 
         let parent = config_path.parent().unwrap();
-        if !parent.exists() {
-            fs::create_dir_all(parent).unwrap();
+        if !fs::try_exists(parent).await.unwrap_or(false) {
+            fs::create_dir_all(parent).await.unwrap();
         }
-        fs::write(config_path, config_str).unwrap();
+        fs::write(config_path, config_str).await.unwrap();
     }
 
     /// Try to read config file, returns error if read or parse fails
-    pub fn try_read(config_path: &PathBuf) -> Result<Config, String> {
+    pub async fn try_read(config_path: &PathBuf) -> Result<Config, String> {
         let config_str = fs::read_to_string(config_path)
+            .await
             .map_err(|e| format!("Failed to read config file: {}", e))?;
         toml::from_str(&config_str)
             .map_err(|e| format!("Failed to parse config file: {}", e))
     }
     
     /// Read config file, creating default if it doesn't exist
-    pub fn read(config_path: &PathBuf) -> Config {
-        if !fs::metadata(config_path).is_ok() {
-            Self::write_default_config(config_path);
+    pub async fn read(config_path: &PathBuf) -> Config {
+        if !fs::try_exists(config_path).await.unwrap_or(false) {
+            Self::write_default_config(config_path).await;
         }
-        let config_str = fs::read_to_string(config_path).unwrap();
+        let config_str = fs::read_to_string(config_path).await.unwrap();
         toml::from_str(&config_str).unwrap()
     }
 }
