@@ -8,17 +8,17 @@ use std::{
 
 use crate::{
     config::{Config, DEFAULT_CONFIG_PATH},
-    consumers::suspend_resume_consumer,
+    consumers::start_suspend_resume_control_thread,
     events::EventBus,
-    secondary_display::{secondary_display_consumer, sync_secondary_display_brightness_thread},
+    secondary_display::start_secondary_display_thread,
     state::{BacklightState, KeyboardStateManager},
-    unix_pipe::{DEFAULT_PIPE_PATH, receive_commands_thread},
+    unix_pipe::start_receive_commands_thread,
     virtual_keyboard::VirtualKeyboard,
-    wired_keyboard_thread::{
-        find_wired_keyboard, monitor_usb_keyboard_hotplug, wired_keyboard_thread,
+    keyboard_usb::{
+        find_wired_keyboard, start_usb_keyboard_monitor_thread, start_wired_keyboard_thread,
     },
 };
-use bt_keyboard_thread::bt_input_monitor_thread;
+use keyboard_bt::start_bt_keyboard_monitor_thread;
 use clap::Parser;
 use log::{error, info};
 
@@ -39,7 +39,7 @@ enum Args {
     },
 }
 
-mod bt_keyboard_thread;
+mod keyboard_bt;
 mod config;
 mod consumers;
 mod events;
@@ -47,7 +47,7 @@ mod secondary_display;
 mod state;
 mod unix_pipe;
 mod virtual_keyboard;
-mod wired_keyboard_thread;
+mod keyboard_usb;
 
 fn main() {
     env_logger::init();
@@ -108,7 +108,7 @@ fn run_daemon(config_path: PathBuf) {
 
     let state_manager = if let Some(keyboard) = find_wired_keyboard(&config) {
         let state_manager = KeyboardStateManager::new(true);
-        wired_keyboard_thread(
+        start_wired_keyboard_thread(
             &config,
             keyboard,
             event_bus.sender(),
@@ -121,58 +121,37 @@ fn run_daemon(config_path: PathBuf) {
         KeyboardStateManager::new(false)
     };
 
-    // Start secondary display brightness sync thread
-    sync_secondary_display_brightness_thread(config.clone());
-
-    // Start event consumers
-    suspend_resume_consumer(
+    start_suspend_resume_control_thread(
         state_manager.clone(),
         event_bus.receiver(),
         event_bus.sender(),
     );
-    secondary_display_consumer(config.clone(), state_manager.clone(), event_bus.receiver());
+    start_secondary_display_thread(config.clone(), state_manager.clone(), event_bus.receiver());
 
-    // Start Bluetooth keyboard monitor thread (producer)
-    {
-        let config = config.clone();
-        let event_sender = event_bus.sender();
-        let event_receiver = event_bus.receiver();
-        let virtual_keyboard = virtual_keyboard.clone();
-        let state_manager = state_manager.clone();
-        thread::spawn(move || {
-            bt_input_monitor_thread(
-                &config,
-                event_sender,
-                event_receiver,
-                virtual_keyboard,
-                state_manager,
-            );
-        });
-    }
+    start_bt_keyboard_monitor_thread(
+        &config,
+        event_bus.sender(),
+        event_bus.receiver(),
+        virtual_keyboard.clone(),
+        state_manager.clone(),
+    );
 
-    {
-        let config = config.clone();
-        let event_sender = event_bus.sender();
-        let event_receiver = event_bus.receiver();
-        let virtual_keyboard = virtual_keyboard.clone();
-        let state_manager = state_manager.clone();
-        thread::spawn(move || {
-            monitor_usb_keyboard_hotplug(
-                config,
-                event_sender,
-                event_receiver,
-                virtual_keyboard,
-                state_manager,
-            );
-        });
-    }
+    start_usb_keyboard_monitor_thread(
+        &config,
+        event_bus.sender(),
+        event_bus.receiver(),
+        virtual_keyboard.clone(),
+        state_manager.clone(),
+    );
 
-    receive_commands_thread(&PathBuf::from(DEFAULT_PIPE_PATH), event_bus.sender());
+    start_receive_commands_thread(&config, event_bus.sender());
 
     panic::set_hook(Box::new(|info| {
         error!("Thread panicked: {info}");
         process::exit(1);
     }));
+
+    info!("Daemon started");
 
     loop {
         thread::park();

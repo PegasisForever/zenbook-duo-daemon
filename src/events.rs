@@ -1,6 +1,5 @@
 use crate::state::BacklightState;
 
-/// Other events - system events, control events, etc.
 #[derive(Debug, Clone)]
 pub enum Event {
     LaptopSuspend,

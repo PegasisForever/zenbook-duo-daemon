@@ -6,24 +6,7 @@ use crate::config::Config;
 use crate::events::Event;
 use crate::state::KeyboardStateManager;
 
-pub fn sync_secondary_display_brightness_thread(config: Config) {
-    let source = config.primary_backlight_path.clone();
-    let target = config.secondary_backlight_path.clone();
-
-    thread::spawn(move || {
-        loop {
-            match fs::read_to_string(&source) {
-                Ok(brightness) => {
-                    fs::write(&target, brightness.trim()).ok();
-                }
-                Err(_) => {}
-            }
-            thread::sleep(Duration::from_millis(500));
-        }
-    });
-}
-
-pub fn control_secondary_display(status_path: &str, enable: bool) {
+fn control_secondary_display(status_path: &str, enable: bool) {
     if enable {
         fs::write(status_path, b"on").unwrap();
     } else {
@@ -43,7 +26,7 @@ fn is_secondary_display_enabled_actual(status_path: &str) -> bool {
 }
 
 /// Secondary display consumer - manages secondary display state and syncs with hardware
-pub fn secondary_display_consumer(
+pub fn start_secondary_display_thread(
     config: Config,
     state_manager: KeyboardStateManager,
     event_receiver: crossbeam_channel::Receiver<Event>,
@@ -105,6 +88,23 @@ pub fn secondary_display_consumer(
                     control_secondary_display(&status_path, desired_enabled);
                 }
                 thread::sleep(Duration::from_secs(1));
+            }
+        });
+    }
+
+    // Thread to sync secondary display brightness
+    {
+        let source = config.primary_backlight_path.clone();
+        let target = config.secondary_backlight_path.clone();
+        thread::spawn(move || {
+            loop {
+                match fs::read_to_string(&source) {
+                    Ok(brightness) => {
+                        fs::write(&target, brightness.trim()).ok();
+                    }
+                    Err(_) => {}
+                }
+                thread::sleep(Duration::from_millis(500));
             }
         });
     }

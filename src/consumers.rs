@@ -6,7 +6,7 @@ use crate::{
 };
 
 /// Suspend/Resume consumer - handles laptop suspend and resume events
-pub fn suspend_resume_consumer(
+pub fn start_suspend_resume_control_thread(
     state_manager: KeyboardStateManager,
     event_receiver: crossbeam_channel::Receiver<Event>,
     event_sender: crossbeam_channel::Sender<Event>,

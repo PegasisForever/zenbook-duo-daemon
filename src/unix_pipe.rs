@@ -6,14 +6,13 @@ use std::io::{BufRead, BufReader, Lines};
 use std::path::PathBuf;
 use std::thread;
 
+use crate::config::Config;
 use crate::events::Event;
 use crate::state::BacklightState;
 
 pub struct UnixPipe {
     lines: Lines<BufReader<File>>,
 }
-
-pub const DEFAULT_PIPE_PATH: &str = "/tmp/zenbook-duo-daemon.pipe";
 
 impl UnixPipe {
     pub fn new(path: &PathBuf) -> Self {
@@ -42,8 +41,8 @@ impl UnixPipe {
     }
 }
 
-pub fn receive_commands_thread(path: &PathBuf, event_sender: crossbeam_channel::Sender<Event>) {
-    let path = path.clone();
+pub fn start_receive_commands_thread(config: &Config, event_sender: crossbeam_channel::Sender<Event>) {
+    let path = PathBuf::from(&config.pipe_path);
     thread::spawn(move || {
         let mut pipe = UnixPipe::new(&path);
         loop {

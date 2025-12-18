@@ -58,6 +58,7 @@ pub struct Config {
     pub secondary_display_status_path: String,
     pub primary_backlight_path: String,
     pub secondary_backlight_path: String,
+    pub pipe_path: String,
 }
 
 impl Config {
@@ -86,6 +87,7 @@ impl Default for Config {
             secondary_display_status_path: "/sys/class/drm/card1-eDP-2/status".to_string(),
             primary_backlight_path: "/sys/class/backlight/intel_backlight/brightness".to_string(),
             secondary_backlight_path: "/sys/class/backlight/card1-eDP-2-backlight/brightness".to_string(),
+            pipe_path: "/tmp/zenbook-duo-daemon.pipe".to_string(),
         }
     }
 }
