@@ -1,15 +1,14 @@
 use log::{info, warn};
 use nix::sys::stat;
 use nix::unistd;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 use tokio::fs;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::broadcast;
 
 use crate::config::Config;
-use crate::events::Event;
-use crate::state::BacklightState;
+use crate::state::{KeyboardBacklightState, KeyboardStateManager};
 
 pub struct UnixPipe {
     reader: BufReader<File>,
@@ -22,17 +21,14 @@ impl UnixPipe {
             info!("Removed existing pipe file");
         }
 
-        // Create the FIFO (mode 0666)
-        unistd::mkfifo(
-            path,
-            stat::Mode::S_IRUSR
-                | stat::Mode::S_IWUSR
-                | stat::Mode::S_IRGRP
-                | stat::Mode::S_IWGRP
-                | stat::Mode::S_IROTH
-                | stat::Mode::S_IWOTH,
-        )
-        .unwrap();
+        // Create the FIFO
+        unistd::mkfifo(path, stat::Mode::from_bits_truncate(0o666)).unwrap();
+
+        // For some reason the permissions are not set correctly by mkfifo, so we set them manually
+        let metadata = fs::metadata(path).await.unwrap();
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o666);
+        fs::set_permissions(path, permissions).await.unwrap();
 
         let file = File::open(path).await.unwrap();
         let reader = BufReader::new(file);
@@ -56,50 +52,51 @@ impl UnixPipe {
     }
 }
 
-pub fn start_receive_commands_task(config: &Config, event_sender: broadcast::Sender<Event>) {
+pub fn start_receive_commands_task(config: &Config, state_manager: KeyboardStateManager) {
     let path = PathBuf::from(&config.pipe_path);
     tokio::spawn(async move {
         let mut pipe = UnixPipe::new(&path).await;
         loop {
             if let Some(line) = pipe.receive_next_command().await {
                 match line.as_str() {
-                    "suspend" => {
-                        event_sender.send(Event::LaptopSuspend).ok();
+                    "idle_start" => {
+                        state_manager.idle_start();
                     }
-                    "resume" => {
-                        event_sender.send(Event::LaptopResume).ok();
+                    "idle_end" => {
+                        state_manager.idle_end();
                     }
                     "mic_mute_led_toggle" => {
-                        event_sender.send(Event::MicMuteLedToggle).ok();
+                        state_manager.toggle_mic_mute_led();
                     }
                     "mic_mute_led_on" => {
-                        event_sender.send(Event::MicMuteLed(true)).ok();
+                        state_manager.set_mic_mute_led(true);
                     }
                     "mic_mute_led_off" => {
-                        event_sender.send(Event::MicMuteLed(false)).ok();
+                        state_manager.set_mic_mute_led(false);
                     }
                     "backlight_toggle" => {
-                        event_sender.send(Event::BacklightToggle).ok();
+                        state_manager.toggle_keyboard_backlight();
                     }
                     "backlight_off" => {
-                        event_sender
-                            .send(Event::Backlight(BacklightState::Off))
-                            .ok();
+                        state_manager.set_keyboard_backlight(KeyboardBacklightState::Off);
                     }
                     "backlight_low" => {
-                        event_sender
-                            .send(Event::Backlight(BacklightState::Low))
-                            .ok();
+                        state_manager.set_keyboard_backlight(KeyboardBacklightState::Low);
                     }
                     "backlight_medium" => {
-                        event_sender
-                            .send(Event::Backlight(BacklightState::Medium))
-                            .ok();
+                        state_manager.set_keyboard_backlight(KeyboardBacklightState::Medium);
                     }
                     "backlight_high" => {
-                        event_sender
-                            .send(Event::Backlight(BacklightState::High))
-                            .ok();
+                        state_manager.set_keyboard_backlight(KeyboardBacklightState::High);
+                    }
+                    "secondary_display_toggle" => {
+                        state_manager.toggle_secondary_display();
+                    }
+                    "secondary_display_on" => {
+                        state_manager.set_secondary_display(true);
+                    }
+                    "secondary_display_off" => {
+                        state_manager.set_secondary_display(false);
                     }
                     _ => {
                         warn!("Unknown pipe command: {}", line);

@@ -2,14 +2,13 @@ use std::panic;
 use std::{path::PathBuf, process, sync::Arc};
 
 use tokio::fs;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 
 use crate::{
     config::{Config, DEFAULT_CONFIG_PATH},
-    consumers::start_suspend_resume_control_task,
-    events::EventBus,
+    events::Event,
     secondary_display::start_secondary_display_task,
-    state::{BacklightState, KeyboardStateManager},
+    state::{KeyboardBacklightState, KeyboardStateManager},
     unix_pipe::start_receive_commands_task,
     virtual_keyboard::VirtualKeyboard,
     keyboard_usb::{
@@ -39,7 +38,6 @@ enum Args {
 
 mod keyboard_bt;
 mod config;
-mod consumers;
 mod events;
 mod secondary_display;
 mod state;
@@ -98,49 +96,43 @@ async fn migrate_config(config_path: PathBuf) {
 async fn run_daemon(config_path: PathBuf) {
     let config = Config::read(&config_path).await;
 
-    // Create event bus
-    let event_bus = EventBus::new();
+    // Create event channel
+    let (event_sender, _) = broadcast::channel::<Event>(64);
 
     // Create virtual keyboard
     let virtual_keyboard = Arc::new(Mutex::new(VirtualKeyboard::new(&config)));
 
     let state_manager = if let Some(keyboard) = find_wired_keyboard(&config).await {
-        let state_manager = KeyboardStateManager::new(true);
+        let state_manager = KeyboardStateManager::new(true, event_sender.clone());
         start_wired_keyboard_task(
             &config,
             keyboard,
-            event_bus.sender(),
-            event_bus.receiver(),
+            event_sender.subscribe(),
             virtual_keyboard.clone(),
             state_manager.clone(),
         ).await;
         state_manager
     } else {
-        KeyboardStateManager::new(false)
+        KeyboardStateManager::new(false, event_sender.clone())
     };
 
-    start_suspend_resume_control_task(
-        state_manager.clone(),
-        event_bus.receiver(),
-        event_bus.sender(),
-    );
-    start_secondary_display_task(config.clone(), state_manager.clone(), event_bus.receiver()).await;
+    start_secondary_display_task(config.clone(), state_manager.clone(), event_sender.subscribe()).await;
 
     start_bt_keyboard_monitor_task(
         &config,
-        event_bus.sender(),
+        event_sender.clone(),
         virtual_keyboard.clone(),
         state_manager.clone(),
     );
 
     start_usb_keyboard_monitor_task(
         &config,
-        event_bus.sender(),
+        event_sender.clone(),
         virtual_keyboard.clone(),
         state_manager.clone(),
     );
 
-    start_receive_commands_task(&config, event_bus.sender());
+    start_receive_commands_task(&config, state_manager.clone());
 
     panic::set_hook(Box::new(|info| {
         error!("Thread panicked: {info}");

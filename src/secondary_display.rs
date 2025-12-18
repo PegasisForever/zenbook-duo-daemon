@@ -34,46 +34,18 @@ pub async fn start_secondary_display_task(
 ) {
     let status_path = config.secondary_display_status_path.clone();
     
-    // If keyboard is attached, ensure display is disabled
-    if state_manager.is_usb_attached().await {
-        state_manager.set_secondary_display_enabled(false).await;
-        control_secondary_display(&status_path, false).await;
-    } else {
-        let actual_enabled = is_secondary_display_enabled_actual(&status_path).await;
-        state_manager.set_secondary_display_enabled(actual_enabled).await;
-    }
+    control_secondary_display(&status_path, state_manager.is_secondary_display_enabled()).await;
 
     // Task to handle events
     {
-        let state_manager = state_manager.clone();
         let status_path = status_path.clone();
         tokio::spawn(async move {
             loop {
                 match event_receiver.recv().await {
-                    Ok(event) => {
-                        match event {
-                            Event::SecondaryDisplayToggle => {
-                                // Only allow toggle if keyboard is not attached
-                                if !state_manager.is_usb_attached().await {
-                                    let current_state = state_manager.is_secondary_display_enabled().await;
-                                    let new_state = !current_state;
-                                    state_manager.set_secondary_display_enabled(new_state).await;
-                                    control_secondary_display(&status_path, new_state).await;
-                                }
-                            }
-                            Event::USBKeyboardAttached => {
-                                // Always disable display when keyboard attaches
-                                state_manager.set_secondary_display_enabled(false).await;
-                                control_secondary_display(&status_path, false).await;
-                            }
-                            Event::USBKeyboardDetached => {
-                                // Enable display when keyboard detaches
-                                state_manager.set_secondary_display_enabled(true).await;
-                                control_secondary_display(&status_path, true).await;
-                            }
-                            _ => {}
-                        }
+                    Ok(Event::SecondaryDisplay(new_state)) => {
+                        control_secondary_display(&status_path, new_state).await;
                     }
+                    Ok(_) => {}
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         continue;
                     }
@@ -95,7 +67,7 @@ pub async fn start_secondary_display_task(
             loop {
                 interval.tick().await;
                 let actual_enabled = is_secondary_display_enabled_actual(&status_path).await;
-                let desired_enabled = state_manager.is_secondary_display_enabled().await;
+                let desired_enabled = state_manager.is_secondary_display_enabled();
                 if actual_enabled != desired_enabled {
                     warn!("Secondary display is not in the desired state, actual: {}, desired: {}", actual_enabled, desired_enabled);
                     control_secondary_display(&status_path, desired_enabled).await;

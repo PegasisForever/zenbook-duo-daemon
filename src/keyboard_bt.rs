@@ -27,7 +27,6 @@ pub fn start_bt_keyboard_monitor_task(
 ) {
     // First, check existing devices
     let config_clone = config.clone();
-    let event_sender_clone = event_sender.clone();
     let virtual_keyboard_clone = virtual_keyboard.clone();
     let state_manager_clone = state_manager.clone();
     
@@ -46,8 +45,7 @@ pub fn start_bt_keyboard_monitor_task(
             try_start_bt_keyboard_task(
                 &config_clone,
                 path,
-                event_sender_clone.clone(),
-                event_sender_clone.subscribe(),
+                event_sender.subscribe(),
                 virtual_keyboard_clone.clone(),
                 state_manager_clone.clone(),
             ).await;
@@ -73,8 +71,7 @@ pub fn start_bt_keyboard_monitor_task(
                             try_start_bt_keyboard_task(
                                 &config_clone,
                                 path,
-                                event_sender_clone.clone(),
-                                event_sender_clone.subscribe(),
+                                event_sender.subscribe(),
                                 virtual_keyboard_clone.clone(),
                                 state_manager_clone.clone(),
                             ).await;
@@ -89,7 +86,6 @@ pub fn start_bt_keyboard_monitor_task(
 async fn try_start_bt_keyboard_task(
     config: &Config,
     path: PathBuf,
-    event_sender: broadcast::Sender<Event>,
     event_receiver: broadcast::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
@@ -124,7 +120,6 @@ async fn try_start_bt_keyboard_task(
                 config,
                 path,
                 input,
-                event_sender,
                 event_receiver,
                 virtual_keyboard,
                 state_manager,
@@ -137,7 +132,6 @@ pub fn start_bt_keyboard_task(
     config: &Config,
     path: PathBuf,
     keyboard: Device,
-    event_sender: broadcast::Sender<Event>,
     mut event_receiver: broadcast::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
@@ -148,7 +142,6 @@ pub fn start_bt_keyboard_task(
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     // Spawn a task to handle backlight events
-    let state_manager_control = state_manager.clone();
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -158,28 +151,14 @@ pub fn start_bt_keyboard_task(
                 }
                 result = event_receiver.recv() => {
                     match result {
-                        Ok(event) => {
-                            match event {
-                                Event::BacklightToggle => {
-                                    let new_state = state_manager_control.get_backlight().await.next();
-                                    state_manager_control.set_backlight(new_state).await;
-                                    // TODO: Send backlight state to keyboard
-                                }
-                                Event::Backlight(state) => {
-                                    state_manager_control.set_backlight(state).await;
-                                    // TODO: Send backlight state to keyboard
-                                }
-                                Event::MicMuteLedToggle => {
-                                    let new_state = !state_manager_control.get_mic_mute_led().await;
-                                    state_manager_control.set_mic_mute_led(new_state).await;
-                                    // TODO: Send microphone mute state to keyboard
-                                }
-                                Event::MicMuteLed(enabled) => {
-                                    state_manager_control.set_mic_mute_led(enabled).await;
-                                    // TODO: Send microphone mute state to keyboard
-                                }
-                                _ => {}
-                            }
+                        Ok(Event::Backlight(_state)) => {
+                            // TODO: send to keyboard device
+                        }
+                        Ok(Event::MicMuteLed(_enabled)) => {
+                            // TODO: send to keyboard device
+                        }
+                        Ok(_) => {
+                            // dont care about other events
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => {
                             continue;
@@ -217,46 +196,46 @@ pub fn start_bt_keyboard_task(
                             debug!("Backlight key pressed");
                             config
                                 .keyboard_backlight_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         } else if event.value == 16 {
                             debug!("Brightness down key pressed");
                             config
                                 .brightness_down_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         } else if event.value == 32 {
                             debug!("Brightness up key pressed");
                             config
                                 .brightness_up_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         } else if event.value == 156 {
                             debug!("Swap up down display key pressed");
                             config
                                 .swap_up_down_display_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         } else if event.value == 124 {
                             debug!("Microphone mute key pressed");
                             config
                                 .microphone_mute_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         } else if event.value == 126 {
                             debug!("Emoji picker key pressed");
                             config
                                 .emoji_picker_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         } else if event.value == 134 {
                             debug!("MyASUS key pressed");
-                            config.myasus_key.execute(&virtual_keyboard, &event_sender).await;
+                            config.myasus_key.execute(&virtual_keyboard, &state_manager).await;
                         } else if event.value == 106 {
                             debug!("Toggle secondary display key pressed");
                             config
                                 .toggle_secondary_display_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         } else {
                             debug!("Unknown key pressed: {:?}", event);

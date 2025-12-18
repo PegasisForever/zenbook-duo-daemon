@@ -1,9 +1,11 @@
 use std::{path::PathBuf, sync::Arc};
 use tokio::fs;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::Mutex;
 
 use evdev_rs::enums::EV_KEY;
 use serde::{Deserialize, Serialize};
+
+use crate::state::KeyboardStateManager;
 
 // All the enum carries a value so the serialized toml looks better
 #[derive(Serialize, Deserialize, Clone)]
@@ -20,7 +22,7 @@ impl KeyFunction {
     pub async fn execute(
         &self,
         virtual_keyboard: &Arc<Mutex<crate::virtual_keyboard::VirtualKeyboard>>,
-        event_sender: &broadcast::Sender<crate::events::Event>,
+        state_manager: &KeyboardStateManager,
     ) {
         match self {
             KeyFunction::KeyBind(items) => {
@@ -33,10 +35,10 @@ impl KeyFunction {
                 crate::execute_command(command);
             }
             KeyFunction::KeyboardBacklight(true) => {
-                event_sender.send(crate::events::Event::BacklightToggle).ok();
+                state_manager.toggle_keyboard_backlight();
             }
             KeyFunction::ToggleSecondaryDisplay(true) => {
-                event_sender.send(crate::events::Event::SecondaryDisplayToggle).ok();
+                state_manager.toggle_secondary_display();
             }
             _ => {
                 // do nothing

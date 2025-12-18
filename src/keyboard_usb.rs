@@ -6,11 +6,11 @@ use nusb::{
     hotplug::HotplugEvent,
     transfer::{ControlOut, ControlType, Interrupt, In, Recipient},
 };
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast, oneshot};
 use futures::stream::StreamExt;
 
 use crate::{
-    BacklightState, config::Config, events::Event, parse_hex_string, state::KeyboardStateManager,
+    KeyboardBacklightState, config::Config, events::Event, parse_hex_string, state::KeyboardStateManager,
     virtual_keyboard::VirtualKeyboard,
 };
 
@@ -42,7 +42,6 @@ pub fn start_usb_keyboard_monitor_task(
                         start_wired_keyboard_task(
                             &config,
                             keyboard,
-                            event_sender.clone(),
                             event_sender.subscribe(),
                             virtual_keyboard.clone(),
                             state_manager.clone(),
@@ -61,14 +60,12 @@ pub fn start_usb_keyboard_monitor_task(
 pub async fn start_wired_keyboard_task(
     config: &Config,
     keyboard: DeviceInfo,
-    event_sender: broadcast::Sender<Event>,
     mut event_receiver: broadcast::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
     let keyboard_device = Arc::new(keyboard.open().await.unwrap());
-    state_manager.set_usb_attached(true).await;
-    event_sender.send(Event::USBKeyboardAttached).ok();
+    state_manager.set_usb_keyboard_attached(true);
     info!("USB connected");
 
     let interface_4 = keyboard_device
@@ -94,19 +91,18 @@ pub async fn start_wired_keyboard_task(
         .unwrap();
 
     // Restore backlight state
-    let backlight_state = state_manager.get_backlight().await;
+    let backlight_state = state_manager.get_keyboard_backlight();
     send_backlight_state(&keyboard_device, backlight_state).await;
 
     // Restore mic mute LED state
-    let mic_mute_state = state_manager.get_mic_mute_led().await;
+    let mic_mute_state = state_manager.get_mic_mute_led();
     send_mute_microphone_state(&keyboard_device, mic_mute_state).await;
 
     // Create a cancellation token for the control task
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
 
     // Spawn a task to handle backlight/mic mute events
-    let keyboard_device_control = keyboard_device.clone();
-    let state_manager_control = state_manager.clone();
+    let keyboard_device2 = keyboard_device.clone();
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -116,28 +112,14 @@ pub async fn start_wired_keyboard_task(
                 }
                 result = event_receiver.recv() => {
                     match result {
-                        Ok(event) => {
-                            match event {
-                                Event::BacklightToggle => {
-                                    let new_state = state_manager_control.get_backlight().await.next();
-                                    state_manager_control.set_backlight(new_state).await;
-                                    send_backlight_state(&keyboard_device_control, new_state).await;
-                                }
-                                Event::Backlight(state) => {
-                                    state_manager_control.set_backlight(state).await;
-                                    send_backlight_state(&keyboard_device_control, state).await;
-                                }
-                                Event::MicMuteLedToggle => {
-                                    let new_state = !state_manager_control.get_mic_mute_led().await;
-                                    state_manager_control.set_mic_mute_led(new_state).await;
-                                    send_mute_microphone_state(&keyboard_device_control, new_state).await;
-                                }
-                                Event::MicMuteLed(enabled) => {
-                                    state_manager_control.set_mic_mute_led(enabled).await;
-                                    send_mute_microphone_state(&keyboard_device_control, enabled).await;
-                                }
-                                _ => {}
-                            }
+                        Ok(Event::Backlight(state)) => {
+                            send_backlight_state(&keyboard_device2, state).await;
+                        }
+                        Ok(Event::MicMuteLed(enabled)) => {
+                            send_mute_microphone_state(&keyboard_device2, enabled).await;
+                        }
+                        Ok(_) => {
+                            // dont care about other events
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => {
                             // Skip lagged messages
@@ -175,53 +157,53 @@ pub async fn start_wired_keyboard_task(
                             debug!("Backlight key pressed");
                             config
                                 .keyboard_backlight_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         }
                         [90, 16, 0, 0, 0, 0] => {
                             debug!("Brightness down key pressed");
                             config
                                 .brightness_down_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         }
                         [90, 32, 0, 0, 0, 0] => {
                             debug!("Brightness up key pressed");
                             config
                                 .brightness_up_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         }
                         [90, 156, 0, 0, 0, 0] => {
                             debug!("Swap up down display key pressed");
                             config
                                 .swap_up_down_display_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         }
                         [90, 124, 0, 0, 0, 0] => {
                             debug!("Microphone mute key pressed");
                             config
                                 .microphone_mute_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         }
                         [90, 126, 0, 0, 0, 0] => {
                             debug!("Emoji picker key pressed");
                             config
                                 .emoji_picker_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         }
                         [90, 134, 0, 0, 0, 0] => {
                             debug!("MyASUS key pressed");
-                            config.myasus_key.execute(&virtual_keyboard, &event_sender).await;
+                            config.myasus_key.execute(&virtual_keyboard, &state_manager).await;
                         }
                         [90, 106, 0, 0, 0, 0] => {
                             debug!("Toggle secondary display key pressed");
                             config
                                 .toggle_secondary_display_key
-                                .execute(&virtual_keyboard, &event_sender)
+                                .execute(&virtual_keyboard, &state_manager)
                                 .await;
                         }
                         _ => {
@@ -235,8 +217,7 @@ pub async fn start_wired_keyboard_task(
                 Err(e) => {
                     // Check if it's a disconnect or other error
                     info!("USB disconnected or error: {:?}", e);
-                    state_manager.set_usb_attached(false).await;
-                    event_sender.send(Event::USBKeyboardDetached).ok();
+                    state_manager.set_usb_keyboard_attached(false);
                     virtual_keyboard.lock().await.release_all_keys();
                     drop(shutdown_tx); // Signal control task to shut down
                     return;
@@ -246,13 +227,12 @@ pub async fn start_wired_keyboard_task(
     });
 }
 
-async fn send_backlight_state(keyboard: &Arc<Device>, state: BacklightState) {
-    info!("Sending backlight state: {:?}", state);
+async fn send_backlight_state(keyboard: &Arc<Device>, state: KeyboardBacklightState) {
     let data = match state {
-        BacklightState::Off => parse_hex_string("5abac5c4000000000000000000000000"),
-        BacklightState::Low => parse_hex_string("5abac5c4010000000000000000000000"),
-        BacklightState::Medium => parse_hex_string("5abac5c4020000000000000000000000"),
-        BacklightState::High => parse_hex_string("5abac5c4030000000000000000000000"),
+        KeyboardBacklightState::Off => parse_hex_string("5abac5c4000000000000000000000000"),
+        KeyboardBacklightState::Low => parse_hex_string("5abac5c4010000000000000000000000"),
+        KeyboardBacklightState::Medium => parse_hex_string("5abac5c4020000000000000000000000"),
+        KeyboardBacklightState::High => parse_hex_string("5abac5c4030000000000000000000000"),
     };
 
     if let Err(e) = keyboard
