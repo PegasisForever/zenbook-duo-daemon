@@ -1,20 +1,24 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::Arc,
+    thread,
     time::Duration,
 };
 
+use futures_lite::stream;
 use log::{debug, info, warn};
 use nusb::{
     Device, DeviceInfo, MaybeFuture as _,
+    hotplug::HotplugEvent,
     transfer::{ControlOut, ControlType, In, Interrupt, Recipient, TransferError},
+    watch_devices,
 };
 
 use crate::{
-    BacklightState, KeyboardState,
-    config::{Config, KeyFunction},
-    execute_command, parse_hex_string,
-    secondary_display::control_secondary_display,
-    virtual_keyboard::VirtualKeyboard,
+    BacklightState,
+    config::Config,
+    events::{Event, KeyPressEvent},
+    parse_hex_string,
+    state::KeyboardStateManager,
 };
 
 pub fn find_wired_keyboard(config: &Config) -> Option<DeviceInfo> {
@@ -24,21 +28,58 @@ pub fn find_wired_keyboard(config: &Config) -> Option<DeviceInfo> {
         .find(|d| d.vendor_id() == config.vendor_id() && d.product_id() == config.product_id())
 }
 
-pub fn wired_keyboard_thread(
-    config: &Config,
-    keyboard: DeviceInfo,
-    keyboard_state: Arc<Mutex<KeyboardState>>,
-    virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
+/// Monitor USB keyboard hotplug events and start wired_keyboard_thread when keyboard connects
+pub fn monitor_usb_keyboard_hotplug(
+    config: Config,
+    event_sender: crossbeam_channel::Sender<Event>,
+    event_receiver: crossbeam_channel::Receiver<Event>,
+    key_press_event_sender: crossbeam_channel::Sender<KeyPressEvent>,
+    state_manager: KeyboardStateManager,
 ) {
-    control_secondary_display(false);
-    let keyboard = keyboard.open().wait().unwrap();
+    for event in stream::block_on(watch_devices().unwrap()) {
+        match event {
+            HotplugEvent::Connected(d)
+                if d.vendor_id() == config.vendor_id() && d.product_id() == config.product_id() =>
+            {
+                if let Some(keyboard) = find_wired_keyboard(&config) {
+                    wired_keyboard_thread(
+                        &config,
+                        keyboard,
+                        event_sender.clone(),
+                        key_press_event_sender.clone(),
+                        event_receiver.clone(),
+                        state_manager.clone(),
+                    );
+                }
+            }
+            HotplugEvent::Disconnected(_d) => {
+                // We rely on the wired_keyboard_thread to detect disconnection
+            }
+            _ => {}
+        }
+    }
+}
+
+
+
+pub fn wired_keyboard_thread(
+    _config: &Config,
+    keyboard: DeviceInfo,
+    event_sender: crossbeam_channel::Sender<Event>,
+    key_press_event_sender: crossbeam_channel::Sender<KeyPressEvent>,
+    event_receiver: crossbeam_channel::Receiver<crate::events::Event>,
+    state_manager: KeyboardStateManager,
+) {
+    let keyboard_device = Arc::new(keyboard.open().wait().unwrap());
+    state_manager.set_usb_attached(true);
+    event_sender.send(Event::USBKeyboardAttached).ok();
     info!("USB connected");
 
-    let interface_4 = keyboard.detach_and_claim_interface(4).wait().unwrap();
+    let interface_4 = keyboard_device.detach_and_claim_interface(4).wait().unwrap();
     let mut endpoint_5 = interface_4.endpoint::<Interrupt, In>(0x85).unwrap();
 
     // enable fn keys
-    keyboard
+    keyboard_device
         .control_out(
             ControlOut {
                 control_type: ControlType::Class,
@@ -53,28 +94,46 @@ pub fn wired_keyboard_thread(
         .wait()
         .unwrap();
 
-    {
-        let keyboard_state = keyboard_state.lock().unwrap();
-        send_backlight_state(&keyboard, keyboard_state.backlight);
-    }
+    // Restore backlight state
+    let backlight_state = state_manager.get_backlight();
+    send_backlight_state(&keyboard_device, backlight_state);
+    
+    // Restore mic mute LED state
+    let mic_mute_state = state_manager.get_mic_mute_led();
+    send_mute_microphone_state(&keyboard_device, mic_mute_state);
 
-    let execute_key_function = |key_function: &KeyFunction| match key_function {
-        KeyFunction::KeyboardBacklight(true) => {
-            let mut keyboard_state = keyboard_state.lock().unwrap();
-            keyboard_state.backlight = keyboard_state.backlight.next();
-            send_backlight_state(&keyboard, keyboard_state.backlight);
+    // Spawn a thread to handle backlight/mic mute events
+    let keyboard_device_control = keyboard_device.clone();
+    let state_manager_control = state_manager.clone();
+    thread::spawn(move || {
+        for event in event_receiver.iter() {
+            match event {
+                Event::BacklightToggle => {
+                    let new_state = state_manager_control.get_backlight().next();
+                    state_manager_control.set_backlight(new_state);
+                    send_backlight_state(&keyboard_device_control, new_state);
+                }
+                Event::Backlight(state) => {
+                    state_manager_control.set_backlight(state);
+                    send_backlight_state(&keyboard_device_control, state);
+                }
+                Event::MicMuteLed(true) => {
+                    state_manager_control.set_mic_mute_led(true);
+                    send_mute_microphone_state(&keyboard_device_control, true);
+                }
+                Event::MicMuteLed(false) => {
+                    state_manager_control.set_mic_mute_led(false);
+                    send_mute_microphone_state(&keyboard_device_control, false);
+                }
+                Event::MicMuteLedToggle => {
+                    let new_state = !state_manager_control.get_mic_mute_led();
+                    state_manager_control.set_mic_mute_led(new_state);
+                    send_mute_microphone_state(&keyboard_device_control, new_state);
+                }
+                _ => {}
+            }
         }
-        KeyFunction::KeyBind(items) => {
-            virtual_keyboard
-                .lock()
-                .unwrap()
-                .release_prev_and_press_keys(items);
-        }
-        KeyFunction::Command(command) => {
-            execute_command(command);
-        }
-        _ => {}
-    };
+    });
 
     loop {
         let buffer = endpoint_5.allocate(64);
@@ -82,8 +141,9 @@ pub fn wired_keyboard_thread(
         match result.status {
             Err(TransferError::Disconnected) => {
                 info!("USB disconnected");
-                virtual_keyboard.lock().unwrap().release_all_keys();
-                control_secondary_display(true);
+                state_manager.set_usb_attached(false);
+                event_sender.send(Event::USBKeyboardDetached).ok();
+                key_press_event_sender.send(KeyPressEvent::AllKeysReleased).ok();
                 return;
             }
             Err(e) => {
@@ -94,40 +154,42 @@ pub fn wired_keyboard_thread(
                 // Only one function key can be pressed at a time, this is a hardware limitation
                 if data == vec![90, 0, 0, 0, 0, 0] {
                     debug!("No key pressed");
-                    virtual_keyboard.lock().unwrap().release_all_keys();
+                    key_press_event_sender.send(KeyPressEvent::AllKeysReleased).ok();
                 } else if data == vec![90, 199, 0, 0, 0, 0] {
                     debug!("Backlight key pressed");
-                    execute_key_function(&config.keyboard_backlight_key);
+                    key_press_event_sender.send(KeyPressEvent::KeyboardBacklightKeyPressed).ok();
                 } else if data == vec![90, 16, 0, 0, 0, 0] {
                     debug!("Brightness down key pressed");
-                    execute_key_function(&config.brightness_down_key);
+                    key_press_event_sender.send(KeyPressEvent::BrightnessDownKeyPressed).ok();
                 } else if data == vec![90, 32, 0, 0, 0, 0] {
                     debug!("Brightness up key pressed");
-                    execute_key_function(&config.brightness_up_key);
+                    key_press_event_sender.send(KeyPressEvent::BrightnessUpKeyPressed).ok();
                 } else if data == vec![90, 156, 0, 0, 0, 0] {
                     debug!("Swap up down display key pressed");
-                    execute_key_function(&config.swap_up_down_display_key);
+                    key_press_event_sender.send(KeyPressEvent::SwapUpDownDisplayKeyPressed).ok();
                 } else if data == vec![90, 124, 0, 0, 0, 0] {
                     debug!("Microphone mute key pressed");
-                    execute_key_function(&config.microphone_mute_key);
+                    key_press_event_sender.send(KeyPressEvent::MicrophoneMuteKeyPressed).ok();
                 } else if data == vec![90, 126, 0, 0, 0, 0] {
                     debug!("Emoji picker key pressed");
-                    execute_key_function(&config.emoji_picker_key);
+                    key_press_event_sender.send(KeyPressEvent::EmojiPickerKeyPressed).ok();
                 } else if data == vec![90, 134, 0, 0, 0, 0] {
                     debug!("MyASUS key pressed");
-                    execute_key_function(&config.myasus_key);
+                    key_press_event_sender.send(KeyPressEvent::MyAsusKeyPressed).ok();
                 } else if data == vec![90, 106, 0, 0, 0, 0] {
                     debug!("Toggle secondary display key pressed, no-op when keyboard is wired");
+                    key_press_event_sender.send(KeyPressEvent::ToggleSecondaryDisplayKeyPressed).ok();
                 } else {
                     debug!("Unknown key pressed: {:?}", data);
-                    virtual_keyboard.lock().unwrap().release_all_keys();
+                    key_press_event_sender.send(KeyPressEvent::AllKeysReleased).ok();
                 }
             }
         }
     }
 }
 
-fn send_backlight_state(keyboard: &Device, state: BacklightState) {
+/// USB keyboard control functions
+fn send_backlight_state(keyboard: &Arc<Device>, state: BacklightState) {
     let data = match state {
         BacklightState::Off => parse_hex_string("5abac5c4000000000000000000000000"),
         BacklightState::Low => parse_hex_string("5abac5c4010000000000000000000000"),
@@ -151,7 +213,7 @@ fn send_backlight_state(keyboard: &Device, state: BacklightState) {
         .unwrap();
 }
 
-fn send_mute_microphone_state(keyboard: &Device, state: bool) {
+fn send_mute_microphone_state(keyboard: &Arc<Device>, state: bool) {
     let data = if state {
         // turn on microphone mute led
         parse_hex_string("5ad07c01000000000000000000000000")

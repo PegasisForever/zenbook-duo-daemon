@@ -25,6 +25,9 @@ pub struct Config {
     pub emoji_picker_key: KeyFunction,
     pub myasus_key: KeyFunction,
     pub toggle_secondary_display_key: KeyFunction,
+    pub secondary_display_status_path: String,
+    pub primary_backlight_path: String,
+    pub secondary_backlight_path: String,
 }
 
 impl Config {
@@ -50,6 +53,9 @@ impl Default for Config {
             emoji_picker_key: KeyFunction::KeyBind(vec![EV_KEY::KEY_LEFTCTRL, EV_KEY::KEY_DOT]),
             myasus_key: KeyFunction::NoOp(true),
             toggle_secondary_display_key: KeyFunction::ToggleSecondaryDisplay(true),
+            secondary_display_status_path: "/sys/class/drm/card1-eDP-2/status".to_string(),
+            primary_backlight_path: "/sys/class/backlight/intel_backlight/brightness".to_string(),
+            secondary_backlight_path: "/sys/class/backlight/card1-eDP-2-backlight/brightness".to_string(),
         }
     }
 }
@@ -57,7 +63,7 @@ impl Default for Config {
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/zenbook-duo-daemon/config.toml";
 
 impl Config {
-    fn write_default_config(config_path: &PathBuf) {
+    pub fn write_default_config(config_path: &PathBuf) {
         let config = Config::default();
         let config_str = toml::to_string(&config).unwrap();
         let help = "
@@ -80,6 +86,15 @@ impl Config {
         fs::write(config_path, config_str).unwrap();
     }
 
+    /// Try to read config file, returns error if read or parse fails
+    pub fn try_read(config_path: &PathBuf) -> Result<Config, String> {
+        let config_str = fs::read_to_string(config_path)
+            .map_err(|e| format!("Failed to read config file: {}", e))?;
+        toml::from_str(&config_str)
+            .map_err(|e| format!("Failed to parse config file: {}", e))
+    }
+    
+    /// Read config file, creating default if it doesn't exist
     pub fn read(config_path: &PathBuf) -> Config {
         if !fs::metadata(config_path).is_ok() {
             Self::write_default_config(config_path);

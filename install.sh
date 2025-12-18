@@ -87,6 +87,12 @@ install() {
         exit 1
     fi
     
+    # Run migrate-config command
+    echo "Running config migration..."
+    "${BINARY_PATH}" migrate-config || {
+        echo "Warning: Config migration failed, continuing anyway..." >&2
+    }
+    
     # Reload systemd and enable/start service
     echo "Reloading systemd daemon..."
     systemctl daemon-reload
@@ -143,6 +149,12 @@ local_install() {
     # Copy service file
     echo "Copying service file from ${service_file_path}..."
     cp "${service_file_path}" "${SERVICE_FILE}"
+    
+    # Run migrate-config command
+    echo "Running config migration..."
+    "${BINARY_PATH}" migrate-config || {
+        echo "Warning: Config migration failed, continuing anyway..." >&2
+    }
     
     # Reload systemd and enable/start service
     echo "Reloading systemd daemon..."

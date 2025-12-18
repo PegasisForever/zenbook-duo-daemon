@@ -1,3 +1,4 @@
+use std::panic;
 use std::{
     path::PathBuf,
     process,
@@ -7,108 +8,179 @@ use std::{
 
 use crate::{
     config::{Config, DEFAULT_CONFIG_PATH},
-    secondary_display::sync_secondary_display_brightness_thread,
+    consumers::{suspend_resume_consumer, virtual_keyboard_consumer},
+    events::{EventBus, KeyPressEventBus},
+    secondary_display::{secondary_display_consumer, sync_secondary_display_brightness_thread},
+    state::{BacklightState, KeyboardStateManager},
+    unix_pipe::{DEFAULT_PIPE_PATH, receive_commands_thread},
     virtual_keyboard::VirtualKeyboard,
-    wired_keyboard_thread::{find_wired_keyboard, wired_keyboard_thread},
+    wired_keyboard_thread::{
+        find_wired_keyboard, monitor_usb_keyboard_hotplug, wired_keyboard_thread,
+    },
 };
 use bt_keyboard_thread::bt_input_monitor_thread;
 use clap::Parser;
-use futures_lite::stream;
-use log::{info, warn};
-use nusb::{hotplug::HotplugEvent, watch_devices};
+use log::{error, info};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
-struct Args {
-    /// Path to the config file, defaults to /etc/zenbook-duo-daemon/config.toml
-    #[arg(short, long)]
-    config_path: Option<PathBuf>,
+enum Args {
+    /// Run the daemon
+    Run {
+        /// Path to the config file, defaults to /etc/zenbook-duo-daemon/config.toml
+        #[arg(short, long)]
+        config_path: Option<PathBuf>,
+    },
+    /// Migrate config file - backs up old config and writes new default if read fails
+    MigrateConfig {
+        /// Path to the config file, defaults to /etc/zenbook-duo-daemon/config.toml
+        #[arg(short, long)]
+        config_path: Option<PathBuf>,
+    },
 }
 
 mod bt_keyboard_thread;
 mod config;
+mod consumers;
+mod events;
 mod secondary_display;
+mod state;
+mod unix_pipe;
 mod virtual_keyboard;
 mod wired_keyboard_thread;
 
 fn main() {
     env_logger::init();
+
     let args = Args::parse();
-    let config = Config::read(
-        &args
-            .config_path
-            .unwrap_or(PathBuf::from(DEFAULT_CONFIG_PATH)),
-    );
 
-    let virtual_keyboard = Arc::new(Mutex::new(VirtualKeyboard::new(&config)));
-    let keyboard_state = Arc::new(Mutex::new(KeyboardState::new()));
-
-    thread::spawn(sync_secondary_display_brightness_thread);
-
-    {
-        let keyboard_state = keyboard_state.clone();
-        let virtual_keyboard = virtual_keyboard.clone();
-        let config = config.clone();
-        thread::spawn(move || bt_input_monitor_thread(&config, keyboard_state, virtual_keyboard));
+    match args {
+        Args::MigrateConfig { config_path } => {
+            migrate_config(config_path.unwrap_or(PathBuf::from(DEFAULT_CONFIG_PATH)));
+            return;
+        }
+        Args::Run { config_path } => {
+            run_daemon(config_path.unwrap_or(PathBuf::from(DEFAULT_CONFIG_PATH)));
+        }
     }
+}
 
-    if let Some(keyboard) = find_wired_keyboard(&config) {
+fn migrate_config(config_path: PathBuf) {
+    use log::{info, warn};
+    use std::fs;
+
+    // Try to read the config
+    match Config::try_read(&config_path) {
+        Ok(_) => {
+            info!("Config file is valid, no migration needed");
+        }
+        Err(e) => {
+            warn!("Failed to read config file: {}", e);
+
+            // Backup the old config file if it exists
+            if config_path.exists() {
+                let backup_path = config_path.with_file_name(format!(
+                    "{}.bak",
+                    config_path.file_name().unwrap().to_string_lossy()
+                ));
+                fs::rename(&config_path, &backup_path).unwrap();
+                info!("Backed up old config to: {}", backup_path.display());
+            }
+
+            // Write new default config
+            Config::write_default_config(&config_path);
+            info!(
+                "Created new default config file at: {}",
+                config_path.display()
+            );
+        }
+    }
+}
+
+fn run_daemon(config_path: PathBuf) {
+    let config = Config::read(&config_path);
+
+    // Create event buses
+    let key_press_event_bus = KeyPressEventBus::new();
+    let event_bus = EventBus::new();
+
+    // Create virtual keyboard
+    let virtual_keyboard = Arc::new(Mutex::new(VirtualKeyboard::new(&config)));
+
+    let state_manager = if let Some(keyboard) = find_wired_keyboard(&config) {
+        let state_manager = KeyboardStateManager::new(true);
         wired_keyboard_thread(
             &config,
             keyboard,
-            keyboard_state.clone(),
-            virtual_keyboard.clone(),
+            event_bus.sender(),
+            key_press_event_bus.sender(),
+            event_bus.receiver(),
+            state_manager.clone(),
         );
+        state_manager
+    } else {
+        KeyboardStateManager::new(false)
+    };
+
+    // Start secondary display brightness sync thread
+    sync_secondary_display_brightness_thread(config.clone());
+
+    // Start event consumers
+    suspend_resume_consumer(
+        state_manager.clone(),
+        event_bus.receiver(),
+        event_bus.sender(),
+    );
+    virtual_keyboard_consumer(
+        config.clone(),
+        virtual_keyboard.clone(),
+        key_press_event_bus.receiver(),
+        event_bus.sender(),
+    );
+    secondary_display_consumer(config.clone(), state_manager.clone(), event_bus.receiver());
+
+    // Start Bluetooth keyboard monitor thread (producer)
+    {
+        let config = config.clone();
+        let key_press_event_sender = key_press_event_bus.sender();
+        let event_receiver = event_bus.receiver();
+        let state_manager = state_manager.clone();
+        thread::spawn(move || {
+            bt_input_monitor_thread(
+                &config,
+                key_press_event_sender,
+                event_receiver,
+                state_manager,
+            );
+        });
     }
 
-    for event in stream::block_on(watch_devices().unwrap()) {
-        match event {
-            HotplugEvent::Connected(d)
-                if d.vendor_id() == config.vendor_id() && d.product_id() == config.product_id() =>
-            {
-                if let Some(keyboard) = find_wired_keyboard(&config) {
-                    wired_keyboard_thread(
-                        &config,
-                        keyboard,
-                        keyboard_state.clone(),
-                        virtual_keyboard.clone(),
-                    );
-                }
-            }
-            _ => {}
-        }
+    {
+        let config = config.clone();
+        let event_sender = event_bus.sender();
+        let event_receiver = event_bus.receiver();
+        let key_press_event_sender = key_press_event_bus.sender();
+        let state_manager = state_manager.clone();
+        thread::spawn(move || {
+            monitor_usb_keyboard_hotplug(
+                config,
+                event_sender,
+                event_receiver,
+                key_press_event_sender,
+                state_manager,
+            );
+        });
     }
-}
 
-#[derive(Clone, Copy)]
-pub struct KeyboardState {
-    backlight: BacklightState,
-}
+    receive_commands_thread(&PathBuf::from(DEFAULT_PIPE_PATH), event_bus.sender());
 
-impl KeyboardState {
-    pub fn new() -> Self {
-        Self {
-            backlight: BacklightState::Low,
-        }
-    }
-}
+    panic::set_hook(Box::new(|info| {
+        error!("Thread panicked: {info}");
+        process::exit(1);
+    }));
 
-#[derive(Clone, Copy)]
-pub enum BacklightState {
-    Off,
-    Low,
-    Medium,
-    High,
-}
-
-impl BacklightState {
-    pub fn next(&self) -> Self {
-        match self {
-            Self::Off => Self::Low,
-            Self::Low => Self::Medium,
-            Self::Medium => Self::High,
-            Self::High => Self::Off,
-        }
+    loop {
+        thread::park();
     }
 }
 
@@ -135,7 +207,7 @@ pub fn execute_command(command: &str) {
                 );
             }
             Err(e) => {
-                warn!("Failed to execute command '{}': {}", command, e);
+                log::warn!("Failed to execute command '{}': {}", command, e);
             }
         },
     );
