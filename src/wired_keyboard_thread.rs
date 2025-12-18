@@ -1,5 +1,5 @@
 use std::{
-    sync::Arc,
+    sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -16,9 +16,10 @@ use nusb::{
 use crate::{
     BacklightState,
     config::Config,
-    events::{Event, KeyPressEvent},
+    events::Event,
     parse_hex_string,
     state::KeyboardStateManager,
+    virtual_keyboard::VirtualKeyboard,
 };
 
 pub fn find_wired_keyboard(config: &Config) -> Option<DeviceInfo> {
@@ -33,7 +34,7 @@ pub fn monitor_usb_keyboard_hotplug(
     config: Config,
     event_sender: crossbeam_channel::Sender<Event>,
     event_receiver: crossbeam_channel::Receiver<Event>,
-    key_press_event_sender: crossbeam_channel::Sender<KeyPressEvent>,
+    virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
     for event in stream::block_on(watch_devices().unwrap()) {
@@ -46,8 +47,8 @@ pub fn monitor_usb_keyboard_hotplug(
                         &config,
                         keyboard,
                         event_sender.clone(),
-                        key_press_event_sender.clone(),
                         event_receiver.clone(),
+                        virtual_keyboard.clone(),
                         state_manager.clone(),
                     );
                 }
@@ -63,11 +64,11 @@ pub fn monitor_usb_keyboard_hotplug(
 
 
 pub fn wired_keyboard_thread(
-    _config: &Config,
+    config: &Config,
     keyboard: DeviceInfo,
     event_sender: crossbeam_channel::Sender<Event>,
-    key_press_event_sender: crossbeam_channel::Sender<KeyPressEvent>,
     event_receiver: crossbeam_channel::Receiver<crate::events::Event>,
+    virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
     let keyboard_device = Arc::new(keyboard.open().wait().unwrap());
@@ -143,7 +144,7 @@ pub fn wired_keyboard_thread(
                 info!("USB disconnected");
                 state_manager.set_usb_attached(false);
                 event_sender.send(Event::USBKeyboardDetached).ok();
-                key_press_event_sender.send(KeyPressEvent::AllKeysReleased).ok();
+                virtual_keyboard.lock().unwrap().release_all_keys();
                 return;
             }
             Err(e) => {
@@ -154,34 +155,34 @@ pub fn wired_keyboard_thread(
                 // Only one function key can be pressed at a time, this is a hardware limitation
                 if data == vec![90, 0, 0, 0, 0, 0] {
                     debug!("No key pressed");
-                    key_press_event_sender.send(KeyPressEvent::AllKeysReleased).ok();
+                    virtual_keyboard.lock().unwrap().release_all_keys();
                 } else if data == vec![90, 199, 0, 0, 0, 0] {
                     debug!("Backlight key pressed");
-                    key_press_event_sender.send(KeyPressEvent::KeyboardBacklightKeyPressed).ok();
+                    config.keyboard_backlight_key.execute(&virtual_keyboard, &event_sender);
                 } else if data == vec![90, 16, 0, 0, 0, 0] {
                     debug!("Brightness down key pressed");
-                    key_press_event_sender.send(KeyPressEvent::BrightnessDownKeyPressed).ok();
+                    config.brightness_down_key.execute(&virtual_keyboard, &event_sender);
                 } else if data == vec![90, 32, 0, 0, 0, 0] {
                     debug!("Brightness up key pressed");
-                    key_press_event_sender.send(KeyPressEvent::BrightnessUpKeyPressed).ok();
+                    config.brightness_up_key.execute(&virtual_keyboard, &event_sender);
                 } else if data == vec![90, 156, 0, 0, 0, 0] {
                     debug!("Swap up down display key pressed");
-                    key_press_event_sender.send(KeyPressEvent::SwapUpDownDisplayKeyPressed).ok();
+                    config.swap_up_down_display_key.execute(&virtual_keyboard, &event_sender);
                 } else if data == vec![90, 124, 0, 0, 0, 0] {
                     debug!("Microphone mute key pressed");
-                    key_press_event_sender.send(KeyPressEvent::MicrophoneMuteKeyPressed).ok();
+                    config.microphone_mute_key.execute(&virtual_keyboard, &event_sender);
                 } else if data == vec![90, 126, 0, 0, 0, 0] {
                     debug!("Emoji picker key pressed");
-                    key_press_event_sender.send(KeyPressEvent::EmojiPickerKeyPressed).ok();
+                    config.emoji_picker_key.execute(&virtual_keyboard, &event_sender);
                 } else if data == vec![90, 134, 0, 0, 0, 0] {
                     debug!("MyASUS key pressed");
-                    key_press_event_sender.send(KeyPressEvent::MyAsusKeyPressed).ok();
+                    config.myasus_key.execute(&virtual_keyboard, &event_sender);
                 } else if data == vec![90, 106, 0, 0, 0, 0] {
-                    debug!("Toggle secondary display key pressed, no-op when keyboard is wired");
-                    key_press_event_sender.send(KeyPressEvent::ToggleSecondaryDisplayKeyPressed).ok();
+                    debug!("Toggle secondary display key pressed");
+                    config.toggle_secondary_display_key.execute(&virtual_keyboard, &event_sender);
                 } else {
                     debug!("Unknown key pressed: {:?}", data);
-                    key_press_event_sender.send(KeyPressEvent::AllKeysReleased).ok();
+                    virtual_keyboard.lock().unwrap().release_all_keys();
                 }
             }
         }

@@ -1,4 +1,4 @@
-use std::{io::ErrorKind, path::PathBuf, thread, time::Duration};
+use std::{io::ErrorKind, path::PathBuf, sync::{Arc, Mutex}, thread, time::Duration};
 
 use evdev_rs::{
     Device, DeviceWrapper as _, ReadFlag,
@@ -9,24 +9,27 @@ use log::{debug, info, warn};
 
 use crate::{
     config::Config,
-    events::{Event, KeyPressEvent},
+    events::Event,
     state::KeyboardStateManager,
+    virtual_keyboard::VirtualKeyboard,
 };
 
 pub fn bt_input_monitor_thread(
     config: &Config,
-    key_press_event_sender: crossbeam_channel::Sender<KeyPressEvent>,
+    event_sender: crossbeam_channel::Sender<Event>,
     event_receiver: crossbeam_channel::Receiver<Event>,
+    virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
-    for entry in std::fs::read_dir("/dev/input").unwrap() {
+        for entry in std::fs::read_dir("/dev/input").unwrap() {
         let entry = entry.unwrap();
         let path = entry.path();
         try_start_bt_keyboard_thread(
             config,
             path,
-            key_press_event_sender.clone(),
+            event_sender.clone(),
             event_receiver.clone(),
+            virtual_keyboard.clone(),
             state_manager.clone(),
         );
     }
@@ -51,8 +54,9 @@ pub fn bt_input_monitor_thread(
                         try_start_bt_keyboard_thread(
                             config,
                             path,
-                            key_press_event_sender.clone(),
+                            event_sender.clone(),
                             event_receiver.clone(),
+                            virtual_keyboard.clone(),
                             state_manager.clone(),
                         );
                     }
@@ -65,8 +69,9 @@ pub fn bt_input_monitor_thread(
 fn try_start_bt_keyboard_thread(
     config: &Config,
     path: PathBuf,
-    key_press_event_sender: crossbeam_channel::Sender<KeyPressEvent>,
+    event_sender: crossbeam_channel::Sender<Event>,
     event_receiver: crossbeam_channel::Receiver<Event>,
+    virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
     if path.is_dir() {
@@ -83,8 +88,9 @@ fn try_start_bt_keyboard_thread(
     if let Ok(input) = evdev_rs::Device::new_from_path(&path) {
         // This name only matches when the keyboard is connected via Bluetooth, which is desired.
         if input.name() == Some("ASUS Zenbook Duo Keyboard") {
-            let key_press_event_sender = key_press_event_sender.clone();
+            let event_sender = event_sender.clone();
             let event_receiver = event_receiver.clone();
+            let virtual_keyboard = virtual_keyboard.clone();
             let state_manager = state_manager.clone();
             let config = config.clone();
             thread::spawn(move || {
@@ -92,8 +98,9 @@ fn try_start_bt_keyboard_thread(
                     &config,
                     path,
                     input,
-                    key_press_event_sender,
+                    event_sender,
                     event_receiver,
+                    virtual_keyboard,
                     state_manager,
                 );
             });
@@ -105,8 +112,9 @@ pub fn bt_keyboard_thread(
     config: &Config,
     path: PathBuf,
     keyboard: Device,
-    key_press_event_sender: crossbeam_channel::Sender<KeyPressEvent>,
+    event_sender: crossbeam_channel::Sender<Event>,
     event_receiver: crossbeam_channel::Receiver<Event>,
+    virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
     info!("Bluetooth connected on {}", path.display());
@@ -144,54 +152,34 @@ pub fn bt_keyboard_thread(
                 if event.event_code == EventCode::EV_ABS(EV_ABS::ABS_MISC) {
                     if event.value == 0 {
                         debug!("No key pressed");
-                        key_press_event_sender
-                            .send(KeyPressEvent::AllKeysReleased)
-                            .ok();
+                        virtual_keyboard.lock().unwrap().release_all_keys();
                     } else if event.value == 199 {
                         debug!("Backlight key pressed");
-                        key_press_event_sender
-                            .send(KeyPressEvent::KeyboardBacklightKeyPressed)
-                            .ok();
+                        config.keyboard_backlight_key.execute(&virtual_keyboard, &event_sender);
                     } else if event.value == 16 {
                         debug!("Brightness down key pressed");
-                        key_press_event_sender
-                            .send(KeyPressEvent::BrightnessDownKeyPressed)
-                            .ok();
+                        config.brightness_down_key.execute(&virtual_keyboard, &event_sender);
                     } else if event.value == 32 {
                         debug!("Brightness up key pressed");
-                        key_press_event_sender
-                            .send(KeyPressEvent::BrightnessUpKeyPressed)
-                            .ok();
+                        config.brightness_up_key.execute(&virtual_keyboard, &event_sender);
                     } else if event.value == 156 {
                         debug!("Swap up down display key pressed");
-                        key_press_event_sender
-                            .send(KeyPressEvent::SwapUpDownDisplayKeyPressed)
-                            .ok();
+                        config.swap_up_down_display_key.execute(&virtual_keyboard, &event_sender);
                     } else if event.value == 124 {
                         debug!("Microphone mute key pressed");
-                        key_press_event_sender
-                            .send(KeyPressEvent::MicrophoneMuteKeyPressed)
-                            .ok();
+                        config.microphone_mute_key.execute(&virtual_keyboard, &event_sender);
                     } else if event.value == 126 {
                         debug!("Emoji picker key pressed");
-                        key_press_event_sender
-                            .send(KeyPressEvent::EmojiPickerKeyPressed)
-                            .ok();
+                        config.emoji_picker_key.execute(&virtual_keyboard, &event_sender);
                     } else if event.value == 134 {
                         debug!("MyASUS key pressed");
-                        key_press_event_sender
-                            .send(KeyPressEvent::MyAsusKeyPressed)
-                            .ok();
+                        config.myasus_key.execute(&virtual_keyboard, &event_sender);
                     } else if event.value == 106 {
                         debug!("Toggle secondary display key pressed");
-                        key_press_event_sender
-                            .send(KeyPressEvent::ToggleSecondaryDisplayKeyPressed)
-                            .ok();
+                        config.toggle_secondary_display_key.execute(&virtual_keyboard, &event_sender);
                     } else {
                         debug!("Unknown key pressed: {:?}", event);
-                        key_press_event_sender
-                            .send(KeyPressEvent::AllKeysReleased)
-                            .ok();
+                        virtual_keyboard.lock().unwrap().release_all_keys();
                     }
                 }
             }
@@ -201,9 +189,7 @@ pub fn bt_keyboard_thread(
             Err(e) => {
                 if !path.exists() {
                     info!("Event file disappeared. Exiting thread.");
-                    key_press_event_sender
-                        .send(KeyPressEvent::AllKeysReleased)
-                        .ok();
+                    virtual_keyboard.lock().unwrap().release_all_keys();
                     return;
                 } else {
                     warn!("Failed to read event: {:?}", e);

@@ -8,8 +8,8 @@ use std::{
 
 use crate::{
     config::{Config, DEFAULT_CONFIG_PATH},
-    consumers::{suspend_resume_consumer, virtual_keyboard_consumer},
-    events::{EventBus, KeyPressEventBus},
+    consumers::suspend_resume_consumer,
+    events::EventBus,
     secondary_display::{secondary_display_consumer, sync_secondary_display_brightness_thread},
     state::{BacklightState, KeyboardStateManager},
     unix_pipe::{DEFAULT_PIPE_PATH, receive_commands_thread},
@@ -100,8 +100,7 @@ fn migrate_config(config_path: PathBuf) {
 fn run_daemon(config_path: PathBuf) {
     let config = Config::read(&config_path);
 
-    // Create event buses
-    let key_press_event_bus = KeyPressEventBus::new();
+    // Create event bus
     let event_bus = EventBus::new();
 
     // Create virtual keyboard
@@ -113,8 +112,8 @@ fn run_daemon(config_path: PathBuf) {
             &config,
             keyboard,
             event_bus.sender(),
-            key_press_event_bus.sender(),
             event_bus.receiver(),
+            virtual_keyboard.clone(),
             state_manager.clone(),
         );
         state_manager
@@ -131,25 +130,21 @@ fn run_daemon(config_path: PathBuf) {
         event_bus.receiver(),
         event_bus.sender(),
     );
-    virtual_keyboard_consumer(
-        config.clone(),
-        virtual_keyboard.clone(),
-        key_press_event_bus.receiver(),
-        event_bus.sender(),
-    );
     secondary_display_consumer(config.clone(), state_manager.clone(), event_bus.receiver());
 
     // Start Bluetooth keyboard monitor thread (producer)
     {
         let config = config.clone();
-        let key_press_event_sender = key_press_event_bus.sender();
+        let event_sender = event_bus.sender();
         let event_receiver = event_bus.receiver();
+        let virtual_keyboard = virtual_keyboard.clone();
         let state_manager = state_manager.clone();
         thread::spawn(move || {
             bt_input_monitor_thread(
                 &config,
-                key_press_event_sender,
+                event_sender,
                 event_receiver,
+                virtual_keyboard,
                 state_manager,
             );
         });
@@ -159,14 +154,14 @@ fn run_daemon(config_path: PathBuf) {
         let config = config.clone();
         let event_sender = event_bus.sender();
         let event_receiver = event_bus.receiver();
-        let key_press_event_sender = key_press_event_bus.sender();
+        let virtual_keyboard = virtual_keyboard.clone();
         let state_manager = state_manager.clone();
         thread::spawn(move || {
             monitor_usb_keyboard_hotplug(
                 config,
                 event_sender,
                 event_receiver,
-                key_press_event_sender,
+                virtual_keyboard,
                 state_manager,
             );
         });

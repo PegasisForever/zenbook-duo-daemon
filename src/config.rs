@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::{Arc, Mutex}};
 
 use evdev_rs::enums::EV_KEY;
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,36 @@ pub enum KeyFunction {
     KeyBind(Vec<EV_KEY>),
     Command(String),
     NoOp(bool),
+}
+
+impl KeyFunction {
+    /// Execute a key function - handles KeyBind, Command, KeyboardBacklight, and ToggleSecondaryDisplay
+    pub fn execute(
+        &self,
+        virtual_keyboard: &Arc<Mutex<crate::virtual_keyboard::VirtualKeyboard>>,
+        event_sender: &crossbeam_channel::Sender<crate::events::Event>,
+    ) {
+        match self {
+            KeyFunction::KeyBind(items) => {
+                virtual_keyboard
+                    .lock()
+                    .unwrap()
+                    .release_prev_and_press_keys(items);
+            }
+            KeyFunction::Command(command) => {
+                crate::execute_command(command);
+            }
+            KeyFunction::KeyboardBacklight(true) => {
+                event_sender.send(crate::events::Event::BacklightToggle).ok();
+            }
+            KeyFunction::ToggleSecondaryDisplay(true) => {
+                event_sender.send(crate::events::Event::SecondaryDisplayToggle).ok();
+            }
+            _ => {
+                // do nothing
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
