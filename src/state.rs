@@ -154,4 +154,9 @@ impl KeyboardStateManager {
         let state = self.state.read().unwrap();
         state.is_secondary_display_enabled
     }
+
+    pub fn is_idle(&self) -> bool {
+        let state = self.state.read().unwrap();
+        state.is_idle
+    }
 }

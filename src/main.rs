@@ -7,16 +7,14 @@ use tokio::sync::{Mutex, broadcast};
 use crate::{
     config::{Config, DEFAULT_CONFIG_PATH},
     events::Event,
+    keyboard_usb::{find_wired_keyboard, start_usb_keyboard_monitor_task, start_usb_keyboard_task},
     secondary_display::start_secondary_display_task,
     state::{KeyboardBacklightState, KeyboardStateManager},
     unix_pipe::start_receive_commands_task,
     virtual_keyboard::VirtualKeyboard,
-    keyboard_usb::{
-        find_wired_keyboard, start_usb_keyboard_monitor_task, start_wired_keyboard_task,
-    },
 };
-use keyboard_bt::start_bt_keyboard_monitor_task;
 use clap::Parser;
+use keyboard_bt::start_bt_keyboard_monitor_task;
 use log::{error, info};
 
 #[derive(Parser, Debug)]
@@ -36,14 +34,14 @@ enum Args {
     },
 }
 
-mod keyboard_bt;
 mod config;
 mod events;
+mod keyboard_bt;
+mod keyboard_usb;
 mod secondary_display;
 mod state;
 mod unix_pipe;
 mod virtual_keyboard;
-mod keyboard_usb;
 
 #[tokio::main]
 async fn main() {
@@ -102,21 +100,29 @@ async fn run_daemon(config_path: PathBuf) {
     // Create virtual keyboard
     let virtual_keyboard = Arc::new(Mutex::new(VirtualKeyboard::new(&config)));
 
-    let state_manager = if let Some(keyboard) = find_wired_keyboard(&config).await {
-        let state_manager = KeyboardStateManager::new(true, event_sender.clone());
-        start_wired_keyboard_task(
-            &config,
-            keyboard,
-            event_sender.subscribe(),
-            virtual_keyboard.clone(),
-            state_manager.clone(),
-        ).await;
-        state_manager
-    } else {
-        KeyboardStateManager::new(false, event_sender.clone())
-    };
+    let (state_manager, current_usb_keyboard) =
+        if let Some(keyboard) = find_wired_keyboard(&config).await {
+            let state_manager = KeyboardStateManager::new(true, event_sender.clone());
+            let current_usb_keyboard = start_usb_keyboard_task(
+                &config,
+                keyboard,
+                event_sender.subscribe(),
+                virtual_keyboard.clone(),
+                state_manager.clone(),
+            )
+            .await;
+            (state_manager, Some(current_usb_keyboard))
+        } else {
+            let state_manager = KeyboardStateManager::new(false, event_sender.clone());
+            (state_manager, None)
+        };
 
-    start_secondary_display_task(config.clone(), state_manager.clone(), event_sender.subscribe()).await;
+    start_secondary_display_task(
+        config.clone(),
+        state_manager.clone(),
+        event_sender.subscribe(),
+    )
+    .await;
 
     start_bt_keyboard_monitor_task(
         &config,
@@ -127,6 +133,7 @@ async fn run_daemon(config_path: PathBuf) {
 
     start_usb_keyboard_monitor_task(
         &config,
+        current_usb_keyboard,
         event_sender.clone(),
         virtual_keyboard.clone(),
         state_manager.clone(),
