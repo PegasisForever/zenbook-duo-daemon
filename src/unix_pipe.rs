@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Lines};
 use std::path::PathBuf;
 use std::thread;
+use std::sync::mpmc;
 
 use crate::config::Config;
 use crate::events::Event;
@@ -21,10 +22,15 @@ impl UnixPipe {
             info!("Removed existing pipe file");
         }
 
-        // Create the FIFO (mode 0622)
+        // Create the FIFO (mode 0666)
         unistd::mkfifo(
             path,
-            stat::Mode::S_IRUSR | stat::Mode::S_IWUSR | stat::Mode::S_IWGRP | stat::Mode::S_IWOTH,
+            stat::Mode::S_IRUSR
+                | stat::Mode::S_IWUSR
+                | stat::Mode::S_IRGRP
+                | stat::Mode::S_IWGRP
+                | stat::Mode::S_IROTH
+                | stat::Mode::S_IWOTH,
         )
         .unwrap();
 
@@ -41,7 +47,10 @@ impl UnixPipe {
     }
 }
 
-pub fn start_receive_commands_thread(config: &Config, event_sender: crossbeam_channel::Sender<Event>) {
+pub fn start_receive_commands_thread(
+    config: &Config,
+    event_sender: mpmc::Sender<Event>,
+) {
     let path = PathBuf::from(&config.pipe_path);
     thread::spawn(move || {
         let mut pipe = UnixPipe::new(&path);

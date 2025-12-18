@@ -1,4 +1,5 @@
 use std::{fs, thread, time::Duration};
+use std::sync::mpmc;
 
 use log::warn;
 
@@ -29,7 +30,7 @@ fn is_secondary_display_enabled_actual(status_path: &str) -> bool {
 pub fn start_secondary_display_thread(
     config: Config,
     state_manager: KeyboardStateManager,
-    event_receiver: crossbeam_channel::Receiver<Event>,
+    event_receiver: mpmc::Receiver<Event>,
 ) {
     let status_path = config.secondary_display_status_path.clone();
     

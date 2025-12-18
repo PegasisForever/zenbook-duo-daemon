@@ -1,4 +1,5 @@
 use std::thread;
+use std::sync::mpmc;
 
 use crate::{
     events::Event,
@@ -8,8 +9,8 @@ use crate::{
 /// Suspend/Resume consumer - handles laptop suspend and resume events
 pub fn start_suspend_resume_control_thread(
     state_manager: KeyboardStateManager,
-    event_receiver: crossbeam_channel::Receiver<Event>,
-    event_sender: crossbeam_channel::Sender<Event>,
+    event_receiver: mpmc::Receiver<Event>,
+    event_sender: mpmc::Sender<Event>,
 ) {
     thread::spawn(move || {
         for event in event_receiver.iter() {

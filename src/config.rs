@@ -1,6 +1,7 @@
 use std::{fs, path::PathBuf, sync::{Arc, Mutex}};
 
 use evdev_rs::enums::EV_KEY;
+use log::debug;
 use serde::{Deserialize, Serialize};
 
 // All the enum carries a value so the serialized toml looks better
@@ -18,7 +19,7 @@ impl KeyFunction {
     pub fn execute(
         &self,
         virtual_keyboard: &Arc<Mutex<crate::virtual_keyboard::VirtualKeyboard>>,
-        event_sender: &crossbeam_channel::Sender<crate::events::Event>,
+        event_sender: &std::sync::mpmc::Sender<crate::events::Event>,
     ) {
         match self {
             KeyFunction::KeyBind(items) => {

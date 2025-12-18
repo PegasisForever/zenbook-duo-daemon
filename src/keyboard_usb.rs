@@ -3,6 +3,7 @@ use std::{
     thread,
     time::Duration,
 };
+use std::sync::mpmc;
 
 use futures_lite::stream;
 use log::{debug, info, warn};
@@ -28,8 +29,8 @@ pub fn find_wired_keyboard(config: &Config) -> Option<DeviceInfo> {
 /// Monitor USB keyboard hotplug events and start wired_keyboard_thread when keyboard connects
 pub fn start_usb_keyboard_monitor_thread(
     config: &Config,
-    event_sender: crossbeam_channel::Sender<Event>,
-    event_receiver: crossbeam_channel::Receiver<Event>,
+    event_sender: mpmc::Sender<Event>,
+    event_receiver: mpmc::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
@@ -63,8 +64,8 @@ pub fn start_usb_keyboard_monitor_thread(
 pub fn start_wired_keyboard_thread(
     config: &Config,
     keyboard: DeviceInfo,
-    event_sender: crossbeam_channel::Sender<Event>,
-    event_receiver: crossbeam_channel::Receiver<crate::events::Event>,
+    event_sender: mpmc::Sender<Event>,
+    event_receiver: mpmc::Receiver<crate::events::Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
@@ -106,12 +107,19 @@ pub fn start_wired_keyboard_thread(
     // Spawn a thread to handle backlight/mic mute events
     let keyboard_device_control = keyboard_device.clone();
     let state_manager_control = state_manager.clone();
-    let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded::<()>(0);
+    let (shutdown_sender, shutdown_receiver) = mpmc::sync_channel::<()>(0);
     thread::spawn(move || {
         loop {
-            crossbeam_channel::select! {
-                recv(event_receiver) -> event => {
-                    match event {
+            // Check for shutdown signal first (non-blocking)
+            match shutdown_receiver.try_recv() {
+                Ok(_) | Err(mpmc::TryRecvError::Disconnected) => {
+                    // Shutdown signal received, exit
+                    info!("USB control thread shutting down");
+                    break;
+                }
+                Err(mpmc::TryRecvError::Empty) => {
+                    // No shutdown signal, try to receive event with timeout to check shutdown periodically
+                    match event_receiver.recv_timeout(Duration::from_millis(500)) {
                         Ok(event) => {
                             match event {
                                 Event::BacklightToggle => {
@@ -135,16 +143,15 @@ pub fn start_wired_keyboard_thread(
                                 _ => {}
                             }
                         }
+                        Err(mpmc::RecvTimeoutError::Timeout) => {
+                            // Timeout - continue loop to check shutdown again
+                            continue;
+                        }
                         Err(_) => {
                             // Event receiver closed, exit
                             break;
                         }
                     }
-                }
-                recv(shutdown_receiver) -> _ => {
-                    // Shutdown signal received, exit
-                    info!("USB control thread shutting down");
-                    break;
                 }
             }
         }

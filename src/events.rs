@@ -1,4 +1,5 @@
 use crate::state::BacklightState;
+use std::sync::mpmc;
 
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -18,21 +19,21 @@ pub enum Event {
 
 /// Event bus for distributing events to consumers
 pub struct EventBus {
-    sender: crossbeam_channel::Sender<Event>,
-    receiver: crossbeam_channel::Receiver<Event>,
+    sender: mpmc::Sender<Event>,
+    receiver: mpmc::Receiver<Event>,
 }
 
 impl EventBus {
     pub fn new() -> Self {
-        let (sender, receiver) = crossbeam_channel::unbounded();
+        let (sender, receiver) = mpmc::channel();
         Self { sender, receiver }
     }
 
-    pub fn sender(&self) -> crossbeam_channel::Sender<Event> {
+    pub fn sender(&self) -> mpmc::Sender<Event> {
         self.sender.clone()
     }
 
-    pub fn receiver(&self) -> crossbeam_channel::Receiver<Event> {
+    pub fn receiver(&self) -> mpmc::Receiver<Event> {
         self.receiver.clone()
     }
 }

@@ -5,6 +5,7 @@ use std::{
     thread,
     time::Duration,
 };
+use std::sync::mpmc;
 
 use evdev_rs::{
     Device, DeviceWrapper as _, ReadFlag,
@@ -19,8 +20,8 @@ use crate::{
 
 pub fn start_bt_keyboard_monitor_thread(
     config: &Config,
-    event_sender: crossbeam_channel::Sender<Event>,
-    event_receiver: crossbeam_channel::Receiver<Event>,
+    event_sender: mpmc::Sender<Event>,
+    event_receiver: mpmc::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
@@ -75,8 +76,8 @@ pub fn start_bt_keyboard_monitor_thread(
 fn try_start_bt_keyboard_thread(
     config: &Config,
     path: PathBuf,
-    event_sender: crossbeam_channel::Sender<Event>,
-    event_receiver: crossbeam_channel::Receiver<Event>,
+    event_sender: mpmc::Sender<Event>,
+    event_receiver: mpmc::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
@@ -111,8 +112,8 @@ pub fn start_bt_keyboard_thread(
     config: &Config,
     path: PathBuf,
     keyboard: Device,
-    event_sender: crossbeam_channel::Sender<Event>,
-    event_receiver: crossbeam_channel::Receiver<Event>,
+    event_sender: mpmc::Sender<Event>,
+    event_receiver: mpmc::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
 ) {
@@ -120,12 +121,19 @@ pub fn start_bt_keyboard_thread(
 
     // Spawn a thread to handle backlight events
     let state_manager_control = state_manager.clone();
-    let (shutdown_sender, shutdown_receiver) = crossbeam_channel::bounded::<()>(0);
+    let (shutdown_sender, shutdown_receiver) = mpmc::sync_channel::<()>(0);
     thread::spawn(move || {
         loop {
-            crossbeam_channel::select! {
-                recv(event_receiver) -> event => {
-                    match event {
+            // Check for shutdown signal first (non-blocking)
+            match shutdown_receiver.try_recv() {
+                Ok(_) | Err(mpmc::TryRecvError::Disconnected) => {
+                    // Shutdown signal received, exit
+                    info!("Bluetooth control thread shutting down");
+                    break;
+                }
+                Err(mpmc::TryRecvError::Empty) => {
+                    // No shutdown signal, try to receive event with timeout to check shutdown periodically
+                    match event_receiver.recv_timeout(Duration::from_millis(500)) {
                         Ok(event) => {
                             match event {
                                 Event::BacklightToggle => {
@@ -149,16 +157,15 @@ pub fn start_bt_keyboard_thread(
                                 _ => {}
                             }
                         }
+                        Err(mpmc::RecvTimeoutError::Timeout) => {
+                            // Timeout - continue loop to check shutdown again
+                            continue;
+                        }
                         Err(_) => {
                             // Event receiver closed, exit
                             break;
                         }
                     }
-                }
-                recv(shutdown_receiver) -> _ => {
-                    // Shutdown signal received, exit
-                    info!("Bluetooth control thread shutting down");
-                    break;
                 }
             }
         }

@@ -1,3 +1,5 @@
+#![feature(mpmc_channel)]
+
 use std::panic;
 use std::{
     path::PathBuf,
