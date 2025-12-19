@@ -41,11 +41,6 @@ This is a daemon that runs on the Zenbook Duo laptop to handle the keyboard and 
 3. Possible in code using the `send_mute_microphone_state` function, however determining the microphone mute state of the system is complicated.
 4. This key combination only works for GTK apps in GNOME.
 
-## Known Issues
-
-- Keyboard backlight stays on after laptop suspended
-- Secondary display turns on after laptop resumes from suspension
-
 ## Installation
 
 ```bash

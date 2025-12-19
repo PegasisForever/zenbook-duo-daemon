@@ -58,6 +58,7 @@ pub fn start_receive_commands_task(config: &Config, state_manager: KeyboardState
         let mut pipe = UnixPipe::new(&path).await;
         loop {
             if let Some(line) = pipe.receive_next_command().await {
+                info!("Received command: {}", line);
                 match line.as_str() {
                     "idle_start" => {
                         state_manager.idle_start();

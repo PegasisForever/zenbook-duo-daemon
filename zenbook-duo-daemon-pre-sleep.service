@@ -1,0 +1,10 @@
+[Unit]
+Description=Notify Zenbook Duo daemon before sleep
+Before=sleep.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'echo idle_start > /tmp/zenbook-duo-daemon.pipe && sleep 0.5'
+
+[Install]
+WantedBy=sleep.target

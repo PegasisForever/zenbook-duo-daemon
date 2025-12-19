@@ -1,4 +1,4 @@
-use std::{io::ErrorKind, path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use evdev_rs::{
     Device, DeviceWrapper as _, InputEvent, ReadFlag,
@@ -181,7 +181,6 @@ pub fn start_bt_keyboard_task(
             // Run the blocking evdev read in a blocking thread
             let result = spawn_blocking(move || {
                 let kb = keyboard_clone.lock().unwrap();
-                info!("Reading event");
                 kb.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING)
             })
             .await
