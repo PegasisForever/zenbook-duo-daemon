@@ -7,6 +7,7 @@ use tokio::sync::{Mutex, broadcast};
 use crate::{
     config::{Config, DEFAULT_CONFIG_PATH},
     events::Event,
+    idle_detection::start_idle_detection_task,
     keyboard_usb::{find_wired_keyboard, start_usb_keyboard_monitor_task, start_usb_keyboard_task},
     secondary_display::start_secondary_display_task,
     state::{KeyboardBacklightState, KeyboardStateManager},
@@ -36,6 +37,7 @@ enum Args {
 
 mod config;
 mod events;
+mod idle_detection;
 mod keyboard_bt;
 mod keyboard_usb;
 mod secondary_display;
@@ -43,7 +45,7 @@ mod state;
 mod unix_pipe;
 mod virtual_keyboard;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() {
     env_logger::init();
 
@@ -100,21 +102,26 @@ async fn run_daemon(config_path: PathBuf) {
     // Create virtual keyboard
     let virtual_keyboard = Arc::new(Mutex::new(VirtualKeyboard::new(&config)));
 
-    let (state_manager, current_usb_keyboard) =
+    let (state_manager, activity_notifier, current_usb_keyboard) =
         if let Some(keyboard) = find_wired_keyboard(&config).await {
             let state_manager = KeyboardStateManager::new(true, event_sender.clone());
+            let activity_notifier = start_idle_detection_task(&config, state_manager.clone());
+
             let current_usb_keyboard = start_usb_keyboard_task(
                 &config,
                 keyboard,
                 event_sender.subscribe(),
                 virtual_keyboard.clone(),
                 state_manager.clone(),
+                activity_notifier.clone(),
             )
             .await;
-            (state_manager, Some(current_usb_keyboard))
+            (state_manager, activity_notifier, Some(current_usb_keyboard))
         } else {
             let state_manager = KeyboardStateManager::new(false, event_sender.clone());
-            (state_manager, None)
+            let activity_notifier = start_idle_detection_task(&config, state_manager.clone());
+
+            (state_manager, activity_notifier, None)
         };
 
     start_secondary_display_task(
@@ -129,6 +136,7 @@ async fn run_daemon(config_path: PathBuf) {
         event_sender.clone(),
         virtual_keyboard.clone(),
         state_manager.clone(),
+        activity_notifier.clone(),
     );
 
     start_usb_keyboard_monitor_task(
@@ -137,9 +145,10 @@ async fn run_daemon(config_path: PathBuf) {
         event_sender.clone(),
         virtual_keyboard.clone(),
         state_manager.clone(),
+        activity_notifier.clone(),
     );
 
-    start_receive_commands_task(&config, state_manager.clone());
+    start_receive_commands_task(&config, state_manager.clone(), activity_notifier.clone());
 
     panic::set_hook(Box::new(|info| {
         error!("Thread panicked: {info}");

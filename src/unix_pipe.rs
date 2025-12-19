@@ -8,6 +8,7 @@ use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::config::Config;
+use crate::idle_detection::ActivityNotifier;
 use crate::state::{KeyboardBacklightState, KeyboardStateManager};
 
 pub struct UnixPipe {
@@ -52,7 +53,11 @@ impl UnixPipe {
     }
 }
 
-pub fn start_receive_commands_task(config: &Config, state_manager: KeyboardStateManager) {
+pub fn start_receive_commands_task(
+    config: &Config,
+    state_manager: KeyboardStateManager,
+    activity_notifier: ActivityNotifier,
+) {
     let path = PathBuf::from(&config.pipe_path);
     tokio::spawn(async move {
         let mut pipe = UnixPipe::new(&path).await;
@@ -60,11 +65,12 @@ pub fn start_receive_commands_task(config: &Config, state_manager: KeyboardState
             if let Some(line) = pipe.receive_next_command().await {
                 info!("Received command: {}", line);
                 match line.as_str() {
-                    "idle_start" => {
-                        state_manager.idle_start();
+                    "suspend_start" => {
+                        state_manager.suspend_start();
                     }
-                    "idle_end" => {
-                        state_manager.idle_end();
+                    "suspend_end" => {
+                        state_manager.suspend_end();
+                        activity_notifier.notify();
                     }
                     "mic_mute_led_toggle" => {
                         state_manager.toggle_mic_mute_led();

@@ -12,7 +12,8 @@ use tokio::sync::{Mutex, broadcast};
 use tokio::{fs, task::spawn_blocking};
 
 use crate::{
-    config::Config, events::Event, state::KeyboardStateManager, virtual_keyboard::VirtualKeyboard,
+    config::Config, events::Event, idle_detection::ActivityNotifier, state::KeyboardStateManager,
+    virtual_keyboard::VirtualKeyboard,
 };
 
 pub fn start_bt_keyboard_monitor_task(
@@ -20,6 +21,7 @@ pub fn start_bt_keyboard_monitor_task(
     event_sender: broadcast::Sender<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
+    activity_notifier: ActivityNotifier,
 ) {
     // First, check existing devices
     let config_clone = config.clone();
@@ -44,6 +46,7 @@ pub fn start_bt_keyboard_monitor_task(
                 event_sender.subscribe(),
                 virtual_keyboard_clone.clone(),
                 state_manager_clone.clone(),
+                activity_notifier.clone(),
             )
             .await;
         }
@@ -71,6 +74,7 @@ pub fn start_bt_keyboard_monitor_task(
                                 event_sender.subscribe(),
                                 virtual_keyboard_clone.clone(),
                                 state_manager_clone.clone(),
+                                activity_notifier.clone(),
                             )
                             .await;
                         }
@@ -87,6 +91,7 @@ async fn try_start_bt_keyboard_task(
     event_receiver: broadcast::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
+    activity_notifier: ActivityNotifier,
 ) {
     // Check if path is a directory using async metadata
     if let Ok(metadata) = fs::metadata(&path).await {
@@ -123,6 +128,7 @@ async fn try_start_bt_keyboard_task(
             event_receiver,
             virtual_keyboard,
             state_manager,
+            activity_notifier,
         );
     }
 }
@@ -134,8 +140,10 @@ pub fn start_bt_keyboard_task(
     mut event_receiver: broadcast::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
+    activity_notifier: ActivityNotifier,
 ) {
     info!("Bluetooth connected on {}", path.display());
+    activity_notifier.notify();
 
     // Create a cancellation token for the control task
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();

@@ -25,6 +25,11 @@ impl KeyboardBacklightState {
 struct InnerState {
     backlight: KeyboardBacklightState,
     mic_mute_led: bool,
+
+    /// when suspended, both backlight and mic mute led are disabled
+    is_suspended: bool,
+
+    /// when idle, only backlight is disabled
     is_idle: bool,
     is_usb_attached: bool,
     is_secondary_display_enabled: bool,
@@ -43,6 +48,7 @@ impl KeyboardStateManager {
             state: Arc::new(RwLock::new(InnerState {
                 backlight: KeyboardBacklightState::Low,
                 mic_mute_led: false,
+                is_suspended: false,
                 is_idle: false,
                 is_usb_attached,
                 is_secondary_display_enabled: !is_usb_attached,
@@ -51,10 +57,26 @@ impl KeyboardStateManager {
         }
     }
 
+    pub fn suspend_start(&self) {
+        let mut state = self.state.write().unwrap();
+        state.is_suspended = true;
+        self.sender.send(Event::MicMuteLed(false)).ok();
+        self.sender
+            .send(Event::Backlight(KeyboardBacklightState::Off))
+            .ok();
+    }
+
+    pub fn suspend_end(&self) {
+        let mut state = self.state.write().unwrap();
+        state.is_suspended = false;
+        drop(state);
+        self.sender.send(Event::MicMuteLed(self.get_mic_mute_led())).ok();
+        self.sender.send(Event::Backlight(self.get_keyboard_backlight())).ok();
+    }
+
     pub fn idle_start(&self) {
         let mut state = self.state.write().unwrap();
         state.is_idle = true;
-        self.sender.send(Event::MicMuteLed(false)).ok();
         self.sender
             .send(Event::Backlight(KeyboardBacklightState::Off))
             .ok();
@@ -63,14 +85,14 @@ impl KeyboardStateManager {
     pub fn idle_end(&self) {
         let mut state = self.state.write().unwrap();
         state.is_idle = false;
-        self.sender.send(Event::MicMuteLed(state.mic_mute_led)).ok();
-        self.sender.send(Event::Backlight(state.backlight)).ok();
+        drop(state);
+        self.sender.send(Event::Backlight(self.get_keyboard_backlight())).ok();
     }
 
     pub fn set_mic_mute_led(&self, enabled: bool) {
         let mut state = self.state.write().unwrap();
         state.mic_mute_led = enabled;
-        if !state.is_idle {
+        if !state.is_suspended {
             self.sender.send(Event::MicMuteLed(enabled)).ok();
         }
     }
@@ -78,20 +100,24 @@ impl KeyboardStateManager {
     pub fn toggle_mic_mute_led(&self) {
         let mut state = self.state.write().unwrap();
         state.mic_mute_led = !state.mic_mute_led;
-        if !state.is_idle {
+        if !state.is_suspended {
             self.sender.send(Event::MicMuteLed(state.mic_mute_led)).ok();
         }
     }
 
     pub fn get_mic_mute_led(&self) -> bool {
         let state = self.state.read().unwrap();
-        state.mic_mute_led
+        if state.is_suspended {
+            false
+        } else {
+            state.mic_mute_led
+        }
     }
 
     pub fn set_keyboard_backlight(&self, new_state: KeyboardBacklightState) {
         let mut state = self.state.write().unwrap();
         state.backlight = new_state;
-        if !state.is_idle {
+        if !state.is_idle && !state.is_suspended {
             self.sender.send(Event::Backlight(new_state)).ok();
         }
     }
@@ -99,14 +125,18 @@ impl KeyboardStateManager {
     pub fn toggle_keyboard_backlight(&self) {
         let mut state = self.state.write().unwrap();
         state.backlight = state.backlight.next();
-        if !state.is_idle {
+        if !state.is_idle && !state.is_suspended {
             self.sender.send(Event::Backlight(state.backlight)).ok();
         }
     }
 
     pub fn get_keyboard_backlight(&self) -> KeyboardBacklightState {
         let state = self.state.read().unwrap();
-        state.backlight
+        if state.is_suspended || state.is_idle {
+            KeyboardBacklightState::Off
+        } else {
+            state.backlight
+        }
     }
 
     pub fn set_secondary_display(&self, enabled: bool) {
@@ -153,10 +183,5 @@ impl KeyboardStateManager {
     pub fn is_secondary_display_enabled(&self) -> bool {
         let state = self.state.read().unwrap();
         state.is_secondary_display_enabled
-    }
-
-    pub fn is_idle(&self) -> bool {
-        let state = self.state.read().unwrap();
-        state.is_idle
     }
 }

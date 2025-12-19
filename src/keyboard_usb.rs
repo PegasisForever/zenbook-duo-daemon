@@ -10,8 +10,7 @@ use nusb::{
 use tokio::sync::{Mutex, broadcast};
 
 use crate::{
-    KeyboardBacklightState, config::Config, events::Event, parse_hex_string,
-    state::KeyboardStateManager, virtual_keyboard::VirtualKeyboard,
+    KeyboardBacklightState, config::Config, events::Event, idle_detection::ActivityNotifier, parse_hex_string, state::KeyboardStateManager, virtual_keyboard::VirtualKeyboard
 };
 
 pub async fn find_wired_keyboard(config: &Config) -> Option<DeviceInfo> {
@@ -28,6 +27,7 @@ pub fn start_usb_keyboard_monitor_task(
     event_sender: broadcast::Sender<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
+    activity_notifier: ActivityNotifier,
 ) {
     let config = config.clone();
     tokio::spawn(async move {
@@ -46,6 +46,7 @@ pub fn start_usb_keyboard_monitor_task(
                             event_sender.subscribe(),
                             virtual_keyboard.clone(),
                             state_manager.clone(),
+                            activity_notifier.clone(),
                         )
                         .await,
                     );
@@ -70,12 +71,14 @@ pub async fn start_usb_keyboard_task(
     mut event_receiver: broadcast::Receiver<Event>,
     virtual_keyboard: Arc<Mutex<VirtualKeyboard>>,
     state_manager: KeyboardStateManager,
+    activity_notifier: ActivityNotifier,
 ) -> (DeviceId, broadcast::Sender<()>) {
     let (shutdown_tx, mut shutdown_rx1) = broadcast::channel::<()>(1);
     let device_id = keyboard.id();
 
     let keyboard_device = Arc::new(keyboard.open().await.unwrap());
     state_manager.set_usb_keyboard_attached(true);
+    activity_notifier.notify();
     info!("USB connected");
 
     let interface_4 = keyboard_device.detach_and_claim_interface(4).await.unwrap();
@@ -159,6 +162,8 @@ pub async fn start_usb_keyboard_task(
                     match completion.status {
                         Ok(_) => {
                             let data = &completion.buffer[..completion.actual_len];
+                            // endpoint 5 is not a HID device so the idle detection module needs to be notified manually
+                            activity_notifier.notify();
                             parse_keyboard_data(data, &config, &virtual_keyboard, &state_manager)
                                 .await;
                         }

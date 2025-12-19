@@ -63,6 +63,8 @@ pub struct Config {
     pub primary_backlight_path: String,
     pub secondary_backlight_path: String,
     pub pipe_path: String,
+    /// Idle timeout in seconds. Set to 0 to disable idle detection.
+    pub idle_timeout_seconds: u64,
 }
 
 impl Config {
@@ -92,6 +94,7 @@ impl Default for Config {
             primary_backlight_path: "/sys/class/backlight/intel_backlight/brightness".to_string(),
             secondary_backlight_path: "/sys/class/backlight/card1-eDP-2-backlight/brightness".to_string(),
             pipe_path: "/tmp/zenbook-duo-daemon.pipe".to_string(),
+            idle_timeout_seconds: 300, // 5 minutes
         }
     }
 }
@@ -112,6 +115,9 @@ impl Config {
 # KeyboardBacklight = true                  # Toggles the keyboard backlight
 # ToggleSecondaryDisplay = true             # Toggles the secondary display
 # NoOp = true                               # Does nothing when the physical key is pressed
+#
+#
+# idle_timeout_seconds = 300 # 5 minutes, set to 0 to disable idle detection
         ".trim();
         let config_str = format!("{}\n\n\n{}", help, config_str);
 

@@ -4,7 +4,7 @@ After=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c 'echo idle_end > /tmp/zenbook-duo-daemon.pipe'
+ExecStart=/bin/bash -c 'echo suspend_end > /tmp/zenbook-duo-daemon.pipe'
 
 [Install]
 WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

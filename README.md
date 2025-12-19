@@ -15,6 +15,7 @@ This is a daemon that runs on the Zenbook Duo laptop to handle the keyboard and 
 ## Features
 
 - ✅ Enable secondary display when keyboard is detached
+- ✅ Disable keyboard backlight when idle
 - ✅ Brightness sync between primary and secondary display
 - ✅ Remap keys to run custom commands or key combinations
 
@@ -38,7 +39,7 @@ This is a daemon that runs on the Zenbook Duo laptop to handle the keyboard and 
 
 1. Should be possible, the packet capture file under windows is at `pcap/bt_change_backlight.pcapng`
 2. Should be possible, the packet capture file under windows is at `pcap/bt_micmute_led.pcapng`
-3. Possible in code using the `send_mute_microphone_state` function, however determining the microphone mute state of the system is complicated.
+3. Possible to manually control via the control pipe, however determining the microphone mute state of the system is complicated.
 4. This key combination only works for GTK apps in GNOME.
 
 ## Installation
@@ -58,11 +59,45 @@ The install script will:
 
 1. Download the latest release from GitHub and install it to `/opt/zenbook-duo-daemon`.
 2. Create a systemd service file in `/etc/systemd/system/zenbook-duo-daemon.service`
-3. Enable and start the service
+3. Create a backup of the old config file if it is not compatible with the new config file.
+4. Enable and start the service
 
 ## Configuration
 
-By default, the config file is located at `/etc/zenbook-duo-daemon/config.toml`. You can edit the key mappings and keyboard VID:PID in the config file. The instructions are provided in the config file.
+By default, the config file is located at `/etc/zenbook-duo-daemon/config.toml`. You can edit the idle timeout, key mappings and keyboard VID:PID in the config file. The instructions are provided in the config file.
+
+## Control Pipe
+
+The daemon creates a named pipe for receiving commands at `/tmp/zenbook-duo-daemon.pipe` by default (configurable via `pipe_path` in the config file). The pipe is accessible by all users.
+
+Send commands using echo example:
+
+```bash
+echo mic_mute_led_toggle > /tmp/zenbook-duo-daemon.pipe
+```
+
+Available commands:
+
+| Command                    | Description                               |
+| -------------------------- | ----------------------------------------- |
+| `mic_mute_led_toggle`      | Toggle microphone mute LED                |
+| `mic_mute_led_on`          | Turn on microphone mute LED               |
+| `mic_mute_led_off`         | Turn off microphone mute LED              |
+| `backlight_toggle`         | Cycle keyboard backlight                  |
+| `backlight_off`            | Turn off keyboard backlight               |
+| `backlight_low`            | Set keyboard backlight to low             |
+| `backlight_medium`         | Set keyboard backlight to medium          |
+| `backlight_high`           | Set keyboard backlight to high            |
+| `secondary_display_toggle` | Toggle secondary display                  |
+| `secondary_display_on`     | Turn on secondary display                 |
+| `secondary_display_off`    | Turn off secondary display                |
+| `suspend_start`            | Signal suspend start (disables backlight) |
+| `suspend_end`              | Signal suspend end (restores backlight)   |
+
+Notes:
+
+1. The `suspend_start` and `suspend_end` commands are sent automatically by the systemd services `zenbook-duo-daemon-pre-sleep` and `zenbook-duo-daemon-post-sleep` to disable keyboard backlight during suspend.
+2. The secondary display commands are no-op when the keyboard is attached.
 
 ## Development
 
