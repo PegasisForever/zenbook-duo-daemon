@@ -2,6 +2,8 @@
 
 This is a daemon that runs on the Zenbook Duo laptop to handle the keyboard and secondary display under linux.
 
+AI Generated Wiki: [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/PegasisForever/zenbook-duo-daemon)
+
 ## Device Support
 
 - ✅ Zenbook Duo 2025
@@ -61,6 +63,10 @@ The install script will:
 2. Create a systemd service file in `/etc/systemd/system/zenbook-duo-daemon.service`
 3. Create a backup of the old config file if it is not compatible with the new config file.
 4. Enable and start the service
+
+## Known Issues
+
+1. High CPU usage after resuming from suspend, can be fixed by restarting the daemon (`systemctl restart zenbook-duo-daemon`).
 
 ## Configuration
 
