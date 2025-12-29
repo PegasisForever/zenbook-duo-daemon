@@ -65,10 +65,6 @@ The install script will:
 3. Create a backup of the old config file if it is not compatible with the new config file.
 4. Enable and start the service
 
-## Known Issues
-
-1. High CPU usage after resuming from suspend, can be fixed by restarting the daemon (`systemctl restart zenbook-duo-daemon`).
-
 ## Configuration
 
 By default, the config file is located at `/etc/zenbook-duo-daemon/config.toml`. You can edit the idle timeout, key mappings and keyboard VID:PID in the config file. The instructions are provided in the config file.

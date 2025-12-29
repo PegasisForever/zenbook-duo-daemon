@@ -907,7 +907,7 @@ checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
 
 [[package]]
 name = "zenbook-duo-daemon"
-version = "0.2.1"
+version = "1.0.0"
 dependencies = [
  "clap",
  "env_logger",
