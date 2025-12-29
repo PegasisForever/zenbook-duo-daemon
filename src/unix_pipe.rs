@@ -13,6 +13,7 @@ use crate::state::{KeyboardBacklightState, KeyboardStateManager};
 
 pub struct UnixPipe {
     reader: BufReader<File>,
+    path: PathBuf,
 }
 
 impl UnixPipe {
@@ -33,17 +34,27 @@ impl UnixPipe {
 
         let file = File::open(path).await.unwrap();
         let reader = BufReader::new(file);
-        Self { reader }
+        Self {
+            reader,
+            path: path.clone(),
+        }
+    }
+
+    /// Re-open the pipe file (called after EOF to wait for new writers)
+    async fn reopen(&mut self) {
+        let file = File::open(&self.path).await.unwrap();
+        self.reader = BufReader::new(file);
     }
 
     /// Blocks until a command is received.
-    /// If returns None, the pipe has been closed.
+    /// If returns None, the pipe has been closed due to an error.
     pub async fn receive_next_command(&mut self) -> Option<String> {
         loop {
             let mut line = String::new();
             match self.reader.read_line(&mut line).await {
                 Ok(0) => {
-                    // EOF
+                    // EOF - all writers closed, re-open to wait for new writers
+                    self.reopen().await;
                     continue;
                 }
                 Ok(_) => return Some(line.trim_end().to_string()),

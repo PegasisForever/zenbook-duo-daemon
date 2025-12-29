@@ -4,7 +4,7 @@ Before=sleep.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/bash -c 'echo suspend_start > /tmp/zenbook-duo-daemon.pipe && sleep 0.5'
+ExecStart=/bin/timeout 1 /bin/bash -c 'echo suspend_start > /tmp/zenbook-duo-daemon.pipe && sleep 0.5'
 
 [Install]
 WantedBy=sleep.target
