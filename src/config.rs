@@ -1,4 +1,5 @@
 use std::{path::PathBuf, sync::Arc};
+use log::{info, warn};
 use tokio::fs;
 use tokio::sync::Mutex;
 
@@ -77,11 +78,28 @@ impl Config {
     }
 }
 
+fn get_usb_product_id() -> String {
+    let board_name = std::fs::read_to_string("/sys/class/dmi/id/board_name")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if board_name == "UX8406CA" {
+        info!("Detected Zenbook Duo 2025");
+        "1bf2".to_string()
+    } else if board_name == "UX8406MA" {
+        info!("Detected Zenbook Duo 2024");
+        "1b2c".to_string()
+    } else {
+        warn!("Unknown board name: {}, using default product id 1b2c", board_name);
+        "1b2c".to_string()
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             usb_vendor_id: "0b05".to_string(),
-            usb_product_id: "1bf2".to_string(),
+            usb_product_id: get_usb_product_id(),
             keyboard_backlight_key: KeyFunction::KeyboardBacklight(true),
             brightness_down_key: KeyFunction::KeyBind(vec![EV_KEY::KEY_BRIGHTNESSDOWN]),
             brightness_up_key: KeyFunction::KeyBind(vec![EV_KEY::KEY_BRIGHTNESSUP]),

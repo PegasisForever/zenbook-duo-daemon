@@ -7,11 +7,12 @@ AI Generated Wiki: [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://dee
 ## Device Support
 
 - ✅ Zenbook Duo 2025
-- ⚠️ Zenbook Duo 2024 (Not tested, likely needs some modifications)
+- ✅ Zenbook Duo 2024
 
 ## Distribution Support
 
 - ✅ Ubuntu 25.10 6.17.0-8-generic
+- ✅ Fedora 42 6.17.13-200.fc42.x86_64
 - ⚠️ Other distributions may work, but are not tested
 
 ## Features
