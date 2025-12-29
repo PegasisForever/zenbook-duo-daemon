@@ -37,8 +37,8 @@ AI Generated Wiki: [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://dee
 | Microphone Mute Key LED Control | ⚠️ (3)     | ❌ (2)         | N/A                          | ✅                          |
 | Emoji Picker Key                | ✅         | ✅             | `KEY_LEFTCTRL + KEY_DOT` (4) | ✅                          |
 | MyASUS Key                      | ✅         | ✅             | None                         | ✅                          |
-| Toggle Secondary Display Key    | ✅         | ✅             | Toggle Secondary Display     | ❌                          |
-| Fn + Function Keys              | ✅         | ✅             | F1 - F12                     | ✅                          |
+| Toggle Secondary Display Key    | ✅         | ✅             | Toggle Secondary Display     | ✅                          |
+| Fn + Function Keys              | ✅         | ✅             | F1 - F12                     | ❌                          |
 
 1. Should be possible, the packet capture file under windows is at `pcap/bt_change_backlight.pcapng`
 2. Should be possible, the packet capture file under windows is at `pcap/bt_micmute_led.pcapng`
