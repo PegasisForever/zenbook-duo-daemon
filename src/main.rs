@@ -1,7 +1,9 @@
 use std::panic;
+use std::time::Duration;
 use std::{path::PathBuf, process, sync::Arc};
 
 use tokio::fs;
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Mutex, broadcast};
 
 use crate::{
@@ -157,10 +159,20 @@ async fn run_daemon(config_path: PathBuf) {
 
     info!("Daemon started");
 
-    // Keep the main task alive
-    loop {
-        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+    // Gracefully shutdown
+    let mut sigterm = signal(SignalKind::terminate()).unwrap();
+    let mut sigint = signal(SignalKind::interrupt()).unwrap();
+    tokio::select! {
+        _ = sigterm.recv() => {
+            info!("SIGTERM received, shutting down");
+        }
+        _ = sigint.recv() => {
+            info!("SIGINT received, shutting down");
+        }
     }
+    state_manager.suspend_start();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    process::exit(0);
 }
 
 pub fn parse_hex_string(hex_string: &str) -> Vec<u8> {
