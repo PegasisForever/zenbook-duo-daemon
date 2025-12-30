@@ -33,7 +33,7 @@ pub async fn start_secondary_display_task(
     mut event_receiver: broadcast::Receiver<Event>,
 ) {
     let status_path = config.secondary_display_status_path.clone();
-    
+
     control_secondary_display(&status_path, state_manager.is_secondary_display_enabled()).await;
 
     // Task to handle events
@@ -69,7 +69,10 @@ pub async fn start_secondary_display_task(
                 let actual_enabled = is_secondary_display_enabled_actual(&status_path).await;
                 let desired_enabled = state_manager.is_secondary_display_enabled();
                 if actual_enabled != desired_enabled {
-                    warn!("Secondary display is not in the desired state, actual: {}, desired: {}", actual_enabled, desired_enabled);
+                    warn!(
+                        "Secondary display is not in the desired state, actual: {}, desired: {}",
+                        actual_enabled, desired_enabled
+                    );
                     control_secondary_display(&status_path, desired_enabled).await;
                 }
             }

@@ -1,5 +1,5 @@
-use std::{path::PathBuf, sync::Arc};
 use log::{info, warn};
+use std::{path::PathBuf, sync::Arc};
 use tokio::fs;
 use tokio::sync::Mutex;
 
@@ -90,7 +90,10 @@ fn get_usb_product_id() -> String {
         info!("Detected Zenbook Duo 2024");
         "1b2c".to_string()
     } else {
-        warn!("Unknown board name: {}, using default product id 1b2c", board_name);
+        warn!(
+            "Unknown board name: {}, using default product id 1b2c",
+            board_name
+        );
         "1b2c".to_string()
     }
 }
@@ -110,7 +113,8 @@ impl Default for Config {
             toggle_secondary_display_key: KeyFunction::ToggleSecondaryDisplay(true),
             secondary_display_status_path: "/sys/class/drm/card1-eDP-2/status".to_string(),
             primary_backlight_path: "/sys/class/backlight/intel_backlight/brightness".to_string(),
-            secondary_backlight_path: "/sys/class/backlight/card1-eDP-2-backlight/brightness".to_string(),
+            secondary_backlight_path: "/sys/class/backlight/card1-eDP-2-backlight/brightness"
+                .to_string(),
             pipe_path: "/tmp/zenbook-duo-daemon.pipe".to_string(),
             idle_timeout_seconds: 300, // 5 minutes
         }
@@ -151,10 +155,9 @@ impl Config {
         let config_str = fs::read_to_string(config_path)
             .await
             .map_err(|e| format!("Failed to read config file: {}", e))?;
-        toml::from_str(&config_str)
-            .map_err(|e| format!("Failed to parse config file: {}", e))
+        toml::from_str(&config_str).map_err(|e| format!("Failed to parse config file: {}", e))
     }
-    
+
     /// Read config file, creating default if it doesn't exist
     pub async fn read(config_path: &PathBuf) -> Config {
         if !fs::try_exists(config_path).await.unwrap_or(false) {

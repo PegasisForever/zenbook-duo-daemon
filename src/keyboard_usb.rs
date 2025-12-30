@@ -10,7 +10,8 @@ use nusb::{
 use tokio::sync::{Mutex, broadcast};
 
 use crate::{
-    KeyboardBacklightState, config::Config, events::Event, idle_detection::ActivityNotifier, parse_hex_string, state::KeyboardStateManager, virtual_keyboard::VirtualKeyboard
+    KeyboardBacklightState, config::Config, events::Event, idle_detection::ActivityNotifier,
+    parse_hex_string, state::KeyboardStateManager, virtual_keyboard::VirtualKeyboard,
 };
 
 pub async fn find_wired_keyboard(config: &Config) -> Option<DeviceInfo> {

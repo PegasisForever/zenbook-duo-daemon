@@ -70,8 +70,12 @@ impl KeyboardStateManager {
         let mut state = self.state.write().unwrap();
         state.is_suspended = false;
         drop(state);
-        self.sender.send(Event::MicMuteLed(self.get_mic_mute_led())).ok();
-        self.sender.send(Event::Backlight(self.get_keyboard_backlight())).ok();
+        self.sender
+            .send(Event::MicMuteLed(self.get_mic_mute_led()))
+            .ok();
+        self.sender
+            .send(Event::Backlight(self.get_keyboard_backlight()))
+            .ok();
     }
 
     pub fn idle_start(&self) {
@@ -86,7 +90,9 @@ impl KeyboardStateManager {
         let mut state = self.state.write().unwrap();
         state.is_idle = false;
         drop(state);
-        self.sender.send(Event::Backlight(self.get_keyboard_backlight())).ok();
+        self.sender
+            .send(Event::Backlight(self.get_keyboard_backlight()))
+            .ok();
     }
 
     pub fn set_mic_mute_led(&self, enabled: bool) {

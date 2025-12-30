@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, thread, time::Duration};
 
 use evdev_rs::{Device, DeviceWrapper as _, ReadFlag};
 use futures::stream::StreamExt;
@@ -183,38 +183,25 @@ async fn try_start_keyboard_listener(path: &PathBuf, activity_tx: mpsc::Unbounde
         _ => return,
     };
 
-    // Check if device name contains "ASUS Zenbook Duo Keyboard"
     let device_name = device.name().unwrap_or("");
-    if !device_name.contains("ASUS Zenbook Duo Keyboard") {
-        return;
+    if device_name.contains("ASUS Zenbook Duo Keyboard") {
+        info!(
+            "Starting idle detection listener on {} ({})",
+            path.display(),
+            device_name
+        );
+
+        start_keyboard_listener(path.clone(), device, activity_tx);
     }
-
-    info!(
-        "Starting idle detection listener on {} ({})",
-        path.display(),
-        device_name
-    );
-
-    start_keyboard_listener(path.clone(), device, activity_tx);
 }
 
-/// Spawns a task that listens to events from a keyboard device
+/// Spawns a thread that listens to events from a keyboard device
+/// Uses a regular thread because device.next_event is blocking
 fn start_keyboard_listener(path: PathBuf, device: Device, activity_tx: mpsc::UnboundedSender<()>) {
-    let device = Arc::new(std::sync::Mutex::new(device));
-
-    tokio::spawn(async move {
+    thread::spawn(move || {
         loop {
-            let device_clone = device.clone();
-
-            // Run the blocking evdev read in a blocking thread
-            let result = spawn_blocking(move || {
-                let dev = device_clone.lock().unwrap();
-                dev.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING)
-            })
-            .await;
-
-            match result {
-                Ok(Ok((_status, _event))) => {
+            match device.next_event(ReadFlag::NORMAL | ReadFlag::BLOCKING) {
+                Ok(_) => {
                     // Notify of activity
                     if activity_tx.send(()).is_err() {
                         // Receiver dropped, stop listening
@@ -222,7 +209,7 @@ fn start_keyboard_listener(path: PathBuf, device: Device, activity_tx: mpsc::Unb
                     }
                     debug!("Activity detected on {}", path.display());
                 }
-                Ok(Err(e)) => {
+                Err(e) => {
                     if let Some(libc::ENODEV) = e.raw_os_error() {
                         info!(
                             "Keyboard device {} disconnected. Stopping idle listener.",
@@ -231,12 +218,8 @@ fn start_keyboard_listener(path: PathBuf, device: Device, activity_tx: mpsc::Unb
                         return;
                     } else {
                         warn!("Failed to read event from {}: {:?}", path.display(), e);
-                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        thread::sleep(Duration::from_millis(100));
                     }
-                }
-                Err(e) => {
-                    warn!("Spawn blocking failed for {}: {:?}", path.display(), e);
-                    return;
                 }
             }
         }

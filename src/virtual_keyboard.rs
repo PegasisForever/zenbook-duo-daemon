@@ -4,7 +4,7 @@ use evdev_rs::{
 };
 use std::time::SystemTime;
 
-use crate::{config::{Config, KeyFunction}};
+use crate::config::{Config, KeyFunction};
 
 pub enum KeyEventType {
     Release,
