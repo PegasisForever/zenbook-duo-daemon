@@ -13,6 +13,7 @@ AI Generated Wiki: [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://dee
 
 - ✅ Ubuntu 25.10 6.17.0-8-generic
 - ✅ Fedora 42 6.17.13-200.fc42.x86_64
+- ⚠️ NixOS: see this [fork](https://github.com/0Tick/zenbook-duo-daemon/tree/copilot/convert-to-nix-flake)
 - ⚠️ Other distributions may work, but are not tested
 
 ## Features
