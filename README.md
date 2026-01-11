@@ -68,7 +68,7 @@ The install script will:
 
 ## Configuration
 
-By default, the config file is located at `/etc/zenbook-duo-daemon/config.toml`. You can edit the idle timeout, key mappings and keyboard VID:PID in the config file. The instructions are provided in the config file.
+By default, the config file is located at `/etc/zenbook-duo-daemon/config.toml`. You can edit the fn lock, idle timeout, key mappings and keyboard VID:PID in the config file. The instructions are provided in the config file.
 
 ## Control Pipe
 
