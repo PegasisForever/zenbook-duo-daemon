@@ -52,6 +52,7 @@ impl KeyFunction {
 pub struct Config {
     usb_vendor_id: String,
     usb_product_id: String,
+    pub fn_lock: bool,
     pub keyboard_backlight_key: KeyFunction,
     pub brightness_down_key: KeyFunction,
     pub brightness_up_key: KeyFunction,
@@ -103,6 +104,7 @@ impl Default for Config {
         Self {
             usb_vendor_id: "0b05".to_string(),
             usb_product_id: get_usb_product_id(),
+            fn_lock: true,
             keyboard_backlight_key: KeyFunction::KeyboardBacklight(true),
             brightness_down_key: KeyFunction::KeyBind(vec![EV_KEY::KEY_BRIGHTNESSDOWN]),
             brightness_up_key: KeyFunction::KeyBind(vec![EV_KEY::KEY_BRIGHTNESSUP]),
@@ -138,7 +140,7 @@ impl Config {
 # ToggleSecondaryDisplay = true             # Toggles the secondary display
 # NoOp = true                               # Does nothing when the physical key is pressed
 #
-#
+# fn_lock = true             # To input F1-F12, you need to press Fn + F1-F12
 # idle_timeout_seconds = 300 # 5 minutes, set to 0 to disable idle detection
         ".trim();
         let config_str = format!("{}\n\n\n{}", help, config_str);

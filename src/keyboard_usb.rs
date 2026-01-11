@@ -94,7 +94,11 @@ pub async fn start_usb_keyboard_task(
                 request: 0x09,
                 value: 0x035a,
                 index: 4,
-                data: &parse_hex_string("5ad04e00000000000000000000000000"),
+                data: &if config.fn_lock {
+                    parse_hex_string("5ad04e00000000000000000000000000")
+                } else {
+                    parse_hex_string("5ad04e01000000000000000000000000")
+                },
             },
             Duration::from_millis(100),
         )

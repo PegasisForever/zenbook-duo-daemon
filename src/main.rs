@@ -82,7 +82,10 @@ async fn migrate_config(config_path: PathBuf) {
                     config_path.file_name().unwrap().to_string_lossy()
                 ));
                 fs::rename(&config_path, &backup_path).await.unwrap();
-                info!("Backed up old config to: {}", backup_path.display());
+                info!(
+                    "\x1b[31mBacked up old config to: {} because it was incompatible with the new version\x1b[0m",
+                    backup_path.display()
+                );
             }
 
             // Write new default config

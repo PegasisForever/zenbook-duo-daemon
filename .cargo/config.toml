@@ -1,5 +1,2 @@
 [target.'cfg(all())']
-runner = "sudo -E"
-
-[env]
-RUST_LOG = "info"
+runner = "sudo RUST_LOG=info"
