@@ -6,6 +6,7 @@ use tokio::fs;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Mutex, broadcast};
 
+use crate::mute_state::start_listen_mute_state_thread;
 use crate::{
     config::{Config, DEFAULT_CONFIG_PATH},
     events::Event,
@@ -42,6 +43,7 @@ mod events;
 mod idle_detection;
 mod keyboard_bt;
 mod keyboard_usb;
+mod mute_state;
 mod secondary_display;
 mod state;
 mod unix_pipe;
@@ -152,6 +154,8 @@ async fn run_daemon(config_path: PathBuf) {
         state_manager.clone(),
         activity_notifier.clone(),
     );
+
+    start_listen_mute_state_thread(state_manager.clone());
 
     start_receive_commands_task(&config, state_manager.clone(), activity_notifier.clone());
 

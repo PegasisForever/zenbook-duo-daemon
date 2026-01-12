@@ -35,16 +35,15 @@ AI Generated Wiki: [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://dee
 | Extended Display Mode Key       | ✅         | ✅             | `KEY_LEFT_META + KEY_P`      | ❌                          |
 | Swap Up Down Display Key        | ✅         | ✅             | None                         | ✅                          |
 | Microphone Mute Key             | ✅         | ✅             | `KEY_MICMUTE`                | ✅                          |
-| Microphone Mute Key LED Control | ⚠️ (3)     | ❌ (2)         | N/A                          | ✅                          |
-| Emoji Picker Key                | ✅         | ✅             | `KEY_LEFTCTRL + KEY_DOT` (4) | ✅                          |
+| Microphone Mute Key LED Control | ✅         | ❌ (2)         | N/A                          | ✅                          |
+| Emoji Picker Key                | ✅         | ✅             | `KEY_LEFTCTRL + KEY_DOT` (3) | ✅                          |
 | MyASUS Key                      | ✅         | ✅             | None                         | ✅                          |
 | Toggle Secondary Display Key    | ✅         | ✅             | Toggle Secondary Display     | ✅                          |
 | Fn + Function Keys              | ✅         | ✅             | F1 - F12                     | ❌                          |
 
 1. Should be possible, the packet capture file under windows is at `pcap/bt_change_backlight.pcapng`
 2. Should be possible, the packet capture file under windows is at `pcap/bt_micmute_led.pcapng`
-3. Possible to manually control via the control pipe, however determining the microphone mute state of the system is complicated.
-4. This key combination only works for GTK apps in GNOME.
+3. This key combination only works for GTK apps in GNOME.
 
 ## Installation
 
