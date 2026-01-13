@@ -66,6 +66,9 @@ fn listen_mute_state(
         let mut subscription_client = PulseAudioClient::new(&pa_socket_path, cookie.clone())?;
         let mut get_muted_client = PulseAudioClient::new(&pa_socket_path, cookie)?;
 
+        let is_muted = get_muted_client.get_is_default_source_muted()?;
+        state_manager.set_mic_mute_led(is_muted);
+
         subscription_client.subscribe_source_events(|_| {
             let is_muted = get_muted_client.get_is_default_source_muted()?;
             state_manager.set_mic_mute_led(is_muted);
