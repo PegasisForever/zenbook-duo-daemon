@@ -49,6 +49,7 @@ impl KeyFunction {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct Config {
     usb_vendor_id: String,
     usb_product_id: String,
@@ -160,11 +161,13 @@ impl Config {
         toml::from_str(&config_str).map_err(|e| format!("Failed to parse config file: {}", e))
     }
 
-    /// Read config file, creating default if it doesn't exist
+    /// Read config file, returning defaults if it doesn't exist
     pub async fn read(config_path: &PathBuf) -> Config {
         if !fs::try_exists(config_path).await.unwrap_or(false) {
-            Self::write_default_config(config_path).await;
+            info!("Config file not found at {}, using defaults", config_path.display());
+            return Config::default();
         }
+        info!("Loading config from: {}", config_path.display());
         let config_str = fs::read_to_string(config_path).await.unwrap();
         toml::from_str(&config_str).unwrap()
     }

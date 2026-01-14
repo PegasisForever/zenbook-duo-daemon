@@ -36,6 +36,12 @@ enum Args {
         #[arg(short, long)]
         config_path: Option<PathBuf>,
     },
+    /// Create default config file
+    CreateConfig {
+        /// Path to the config file, defaults to /etc/zenbook-duo-daemon/config.toml
+        #[arg(short, long)]
+        config_path: Option<PathBuf>,
+    },
 }
 
 mod config;
@@ -58,6 +64,12 @@ async fn main() {
     match args {
         Args::MigrateConfig { config_path } => {
             migrate_config(config_path.unwrap_or(PathBuf::from(DEFAULT_CONFIG_PATH))).await;
+            return;
+        }
+        Args::CreateConfig { config_path } => {
+            let config_path = config_path.unwrap_or(PathBuf::from(DEFAULT_CONFIG_PATH));
+            Config::write_default_config(&config_path).await;
+            info!("Created default config file at: {}", config_path.display());
             return;
         }
         Args::Run { config_path } => {
