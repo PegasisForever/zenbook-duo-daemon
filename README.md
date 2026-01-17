@@ -6,8 +6,8 @@ AI Generated Wiki: [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://dee
 
 ## Device Support
 
-- ✅ Zenbook Duo 2025
-- ✅ Zenbook Duo 2024
+- ✅ Zenbook Duo 2025 (UX8406CA)
+- ✅ Zenbook Duo 2024 (UX8406MA)
 
 ## Distribution Support
 
