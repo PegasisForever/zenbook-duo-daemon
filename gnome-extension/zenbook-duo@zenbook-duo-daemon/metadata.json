@@ -1,0 +1,8 @@
+{
+    "uuid": "zenbook-duo@zenbook-duo-daemon",
+    "name": "Zenbook Duo Keyboard & Display",
+    "description": "Zenbook Duo keyboard battery, link state, display policy, mic/backlight, stylus mapping, and daemon health in GNOME Quick Settings.",
+    "shell-version": ["45", "46", "47", "48", "50"],
+    "version": 2,
+    "url": "https://github.com/sunnymoon/zenbook-duo-daemon"
+}

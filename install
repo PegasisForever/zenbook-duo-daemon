@@ -1,0 +1,679 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVICE_NAME="zenbook-duo-daemon"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+SESSION_SERVICE_NAME="zenbook-duo-session"
+SESSION_SERVICE_FILE="/etc/systemd/user/${SESSION_SERVICE_NAME}.service"
+DBUS_POLICY_NAME="zenbook-duo-daemon-dbus.conf"
+DBUS_POLICY_FILE="/etc/dbus-1/system.d/${DBUS_POLICY_NAME}"
+INSTALL_DIR="/opt/zenbook-duo-daemon"
+BINARY_PATH="${INSTALL_DIR}/zenbook-duo-daemon"
+# Optional `PATH` convenience: always a symlink to the canonical binary under /opt.
+CLI_SYMLINK_PATH="/usr/local/bin/zenbook-duo-daemon"
+GITHUB_REPO="https://github.com/sunnymoon/zenbook-duo-daemon/releases/latest/download"
+GITHUB_RAW_BASE="https://raw.githubusercontent.com/sunnymoon/zenbook-duo-daemon/refs/heads/master"
+QUIRKS_FILE="/etc/libinput/local-overrides.quirks"
+QUIRKS_ASSET_NAME="local-overrides.quirks"
+POLKIT_POLICY_NAME="org.zenbook.duo.policy"
+POLKIT_POLICY_DEST="/usr/share/polkit-1/actions/${POLKIT_POLICY_NAME}"
+LEGACY_DAEMON_GROUP="zenbook-duo"
+SESSION_SYSTEMD_DIR="$(dirname "${SESSION_SERVICE_FILE}")"
+
+ensure_session_systemd_user_dir() {
+    # Required on minimal images: `curl` / `cp` into /etc/systemd/user otherwise fail.
+    mkdir -p "${SESSION_SYSTEMD_DIR}"
+}
+
+# Legacy FIFO + systemd sleep-hook units (replaced by logind PrepareForSleep + `control` CLI).
+cleanup_legacy_pipe_and_sleep_hooks() {
+    local legacy_pipe="/tmp/zenbook-duo-daemon.pipe"
+    if [ -p "${legacy_pipe}" ] || [ -e "${legacy_pipe}" ]; then
+        echo "Removing legacy control pipe ${legacy_pipe}..."
+        rm -f "${legacy_pipe}" || true
+    fi
+    for u in zenbook-duo-daemon-pre-sleep zenbook-duo-daemon-post-sleep; do
+        if systemctl is-active --quiet "${u}" 2>/dev/null; then
+            echo "Stopping legacy sleep-hook unit ${u}..."
+            systemctl stop "${u}" || true
+        fi
+        if systemctl is-enabled --quiet "${u}" 2>/dev/null; then
+            echo "Disabling legacy sleep-hook unit ${u}..."
+            systemctl disable "${u}" || true
+        fi
+        if [ -f "/etc/systemd/system/${u}.service" ]; then
+            echo "Removing legacy unit file /etc/systemd/system/${u}.service..."
+            rm -f "/etc/systemd/system/${u}.service"
+        fi
+    done
+}
+
+reload_polkit() {
+    if systemctl reload polkit.service 2>/dev/null; then
+        return 0
+    fi
+    if systemctl try-reload-or-restart polkit.service 2>/dev/null; then
+        return 0
+    fi
+    p="$(pidof polkitd 2>/dev/null || true)"
+    if [ -n "${p}" ]; then
+        for x in ${p}; do
+            kill -HUP "${x}" 2>/dev/null && return 0
+        done
+    fi
+    echo "Warning: Could not reload polkit; new policy may apply after reboot" >&2
+}
+
+install_polkit_policy_from_url() {
+    mkdir -p "$(dirname "${POLKIT_POLICY_DEST}")"
+    echo "Downloading Polkit policy from ${GITHUB_RAW_BASE}/${POLKIT_POLICY_NAME}..."
+    if ! curl -fSL -o "${POLKIT_POLICY_DEST}" "${GITHUB_RAW_BASE}/${POLKIT_POLICY_NAME}"; then
+        echo "Error: Failed to download Polkit policy" >&2
+        exit 1
+    fi
+    chmod 644 "${POLKIT_POLICY_DEST}"
+    reload_polkit || true
+}
+
+install_polkit_policy_from_path() {
+    local src="$1"
+    mkdir -p "$(dirname "${POLKIT_POLICY_DEST}")"
+    echo "Installing Polkit policy to ${POLKIT_POLICY_DEST}..."
+    cp "${src}" "${POLKIT_POLICY_DEST}"
+    chmod 644 "${POLKIT_POLICY_DEST}"
+    reload_polkit || true
+}
+
+remove_polkit_policy() {
+    if [ -f "${POLKIT_POLICY_DEST}" ]; then
+        echo "Removing Polkit policy ${POLKIT_POLICY_DEST}..."
+        rm -f "${POLKIT_POLICY_DEST}"
+        reload_polkit || true
+    fi
+}
+
+remove_legacy_daemon_group_if_present() {
+    if getent group "${LEGACY_DAEMON_GROUP}" > /dev/null 2>&1; then
+        echo "Removing legacy system group ${LEGACY_DAEMON_GROUP} (replaced by Polkit; may fail if users are still members)..."
+        groupdel "${LEGACY_DAEMON_GROUP}" 2>/dev/null || true
+    fi
+}
+
+ensure_quirk_stanza() {
+    local target_file="$1"
+    local source_file="$2"
+    local section_name="$3"
+    local match_udev_type="$4"
+    local match_bus="$5"
+    local match_vendor="$6"
+    local match_product="$7"
+    local attr_line="$8"
+    local section_block
+
+    if awk \
+        -v match_udev_type="${match_udev_type}" \
+        -v match_bus="${match_bus}" \
+        -v match_vendor="${match_vendor}" \
+        -v match_product="${match_product}" \
+        -v attr_line="${attr_line}" \
+        '
+        BEGIN { RS=""; FS="\n"; found=0 }
+        {
+            has_udev=0
+            has_bus=0
+            has_vendor=0
+            has_product=0
+            has_attr=0
+            for (i = 1; i <= NF; i++) {
+                line = $i
+                sub(/\r$/, "", line)
+                if (line == "MatchUdevType=" match_udev_type) {
+                    has_udev = 1
+                } else if (line == "MatchBus=" match_bus) {
+                    has_bus = 1
+                } else if (line == "MatchVendor=" match_vendor) {
+                    has_vendor = 1
+                } else if (line == "MatchProduct=" match_product) {
+                    has_product = 1
+                } else if (line == attr_line) {
+                    has_attr = 1
+                }
+            }
+            if (has_udev && has_bus && has_vendor && has_product && has_attr) {
+                found = 1
+                exit
+            }
+        }
+        END { exit(found ? 0 : 1) }
+        ' "${target_file}"; then
+        echo "libinput quirk already present for ${section_name}"
+        return 0
+    fi
+
+    section_block="$(
+        awk -v section_name="${section_name}" '
+            $0 == "[" section_name "]" {
+                print
+                while (getline > 0) {
+                    print
+                    if ($0 == "") {
+                        exit
+                    }
+                }
+                exit
+            }
+        ' "${source_file}"
+    )"
+
+    if [ -z "${section_block}" ]; then
+        echo "Warning: Failed to find quirk section ${section_name} in ${source_file}" >&2
+        return 1
+    fi
+
+    printf '\n%s\n' "${section_block}" >> "${target_file}"
+    echo "Added libinput quirk for ${section_name}"
+}
+
+merge_zenbook_duo_quirks() {
+    local source_file="$1"
+
+    if [ ! -f "${source_file}" ]; then
+        echo "Warning: Quirk source file not found: ${source_file}" >&2
+        return 1
+    fi
+
+    mkdir -p "$(dirname "${QUIRKS_FILE}")"
+    touch "${QUIRKS_FILE}"
+
+    ensure_quirk_stanza "${QUIRKS_FILE}" "${source_file}" "ASUS Zenbook Duo USB Keyboard 2024" "keyboard" "usb" "0x0B05" "0x1B2C" "AttrKeyboardIntegration=internal"
+    ensure_quirk_stanza "${QUIRKS_FILE}" "${source_file}" "ASUS Zenbook Duo USB Keyboard 2025" "keyboard" "usb" "0x0B05" "0x1BF2" "AttrKeyboardIntegration=internal"
+    ensure_quirk_stanza "${QUIRKS_FILE}" "${source_file}" "ASUS Zenbook Duo Bluetooth Keyboard" "keyboard" "bluetooth" "0x0B05" "0x1BF3" "AttrKeyboardIntegration=internal"
+    ensure_quirk_stanza "${QUIRKS_FILE}" "${source_file}" "ASUS Zenbook Duo Bluetooth Touchpad Combo" "touchpad" "bluetooth" "0x0B05" "0x1BF3" "AttrTPKComboLayout=below"
+
+}
+
+install_quirks_from_release() {
+    local temp_quirks
+    temp_quirks="$(mktemp)"
+
+    if curl -fSL -o "${temp_quirks}" "${GITHUB_REPO}/${QUIRKS_ASSET_NAME}"; then
+        if [ -s "${temp_quirks}" ]; then
+            echo "Merging libinput quirks from release asset..."
+            merge_zenbook_duo_quirks "${temp_quirks}" || true
+        else
+            echo "Warning: Downloaded quirk file is empty" >&2
+        fi
+    else
+        echo "Warning: Failed to download ${QUIRKS_ASSET_NAME}; skipping libinput quirk merge" >&2
+    fi
+
+    rm -f "${temp_quirks}"
+}
+
+install_quirks_from_local_source() {
+    local source_file="$1"
+    echo "Merging libinput quirks from ${source_file}..."
+    merge_zenbook_duo_quirks "${source_file}"
+}
+
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        echo "Error: This script must be run as root" >&2
+        exit 1
+    fi
+}
+
+install_cli_symlink() {
+    mkdir -p "$(dirname "${CLI_SYMLINK_PATH}")"
+    echo "Linking ${CLI_SYMLINK_PATH} -> ${BINARY_PATH}..."
+    ln -sfn "${BINARY_PATH}" "${CLI_SYMLINK_PATH}"
+}
+
+remove_cli_symlink_if_ours() {
+    if [ ! -L "${CLI_SYMLINK_PATH}" ]; then
+        return 0
+    fi
+    # `readlink -f` needs the symlink target to exist; after a partial uninstall the binary may be
+    # gone while the CLI symlink still points at ${BINARY_PATH}. Compare the stored target first.
+    local literal_target canonical_cli canonical_bin
+    literal_target=$(readlink "${CLI_SYMLINK_PATH}" 2>/dev/null || true)
+    if [ -n "${literal_target}" ] && [ "${literal_target}" = "${BINARY_PATH}" ]; then
+        echo "Removing CLI symlink ${CLI_SYMLINK_PATH}..."
+        rm -f "${CLI_SYMLINK_PATH}"
+        return 0
+    fi
+    if [ -e "${CLI_SYMLINK_PATH}" ] && [ -e "${BINARY_PATH}" ]; then
+        canonical_cli=$(readlink -f "${CLI_SYMLINK_PATH}" 2>/dev/null || true)
+        canonical_bin=$(readlink -f "${BINARY_PATH}" 2>/dev/null || true)
+        if [ -n "${canonical_cli}" ] && [ -n "${canonical_bin}" ] && [ "${canonical_cli}" = "${canonical_bin}" ]; then
+            echo "Removing CLI symlink ${CLI_SYMLINK_PATH}..."
+            rm -f "${CLI_SYMLINK_PATH}"
+        fi
+    fi
+}
+
+run_user_systemctl() {
+    local uid="$1"
+    local user="$2"
+    shift 2
+
+    if [ ! -d "/run/user/${uid}" ]; then
+        return 1
+    fi
+
+    runuser -u "${user}" -- env \
+        XDG_RUNTIME_DIR="/run/user/${uid}" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
+        systemctl --user "$@"
+}
+
+user_session_override_file() {
+    local user="$1"
+    local home_dir
+
+    home_dir="$(getent passwd "${user}" | cut -d: -f6)"
+    if [ -z "${home_dir}" ]; then
+        return 1
+    fi
+
+    printf '%s\n' "${home_dir}/.config/systemd/user/${SESSION_SERVICE_NAME}.service"
+}
+
+remove_stale_session_override_for_user() {
+    local uid="$1"
+    local user="$2"
+    local override_file
+
+    override_file="$(user_session_override_file "${user}")" || return 0
+    if [ ! -f "${override_file}" ]; then
+        return 0
+    fi
+
+    if cmp -s "${override_file}" "${SESSION_SERVICE_FILE}"; then
+        echo "Removing stale user override ${override_file} for ${user}..."
+        rm -f "${override_file}"
+        run_user_systemctl "${uid}" "${user}" daemon-reload || true
+    else
+        echo "Warning: Keeping customized user override ${override_file} for ${user}" >&2
+    fi
+}
+
+for_each_active_user() {
+    while read -r uid user _; do
+        if [ -n "${uid}" ] && [ -n "${user}" ]; then
+            "$@" "${uid}" "${user}"
+        fi
+    done < <(loginctl list-users --no-legend 2>/dev/null || true)
+}
+
+reload_system_dbus() {
+    if systemctl reload dbus 2>/dev/null; then
+        return 0
+    fi
+    if systemctl reload dbus-broker 2>/dev/null; then
+        return 0
+    fi
+    echo "Warning: Failed to reload system D-Bus policy; a reboot or manual reload may be required" >&2
+}
+
+# Enable fractional-scaling in the GDM greeter's dconf database so the greeter accepts
+# monitors.xml configs that use fractional scales (e.g. the Zenbook Duo's 5/3 scale).
+# Without this, Mutter silently drops the greeter monitors.xml (GDM bug #1028) and the
+# login screen falls back to its default (side-by-side) layout. The session/root daemon
+# writes /etc/xdg/monitors.xml + /var/lib/gdm/seat0/config/monitors.xml at runtime.
+setup_gdm_fractional_scaling() {
+    local gdm_db_dir="/etc/dconf/db/gdm.d"
+    local conf="${gdm_db_dir}/02-zenbook-duo-fractional-scaling"
+
+    if [ ! -d "/etc/dconf/db" ]; then
+        echo "Note: dconf not present; skipping GDM fractional-scaling setup" >&2
+        return 0
+    fi
+
+    echo "Configuring GDM greeter fractional scaling (dconf)..."
+    mkdir -p "${gdm_db_dir}"
+    # Remove the older manually-seeded filename if present, so we own a single canonical file.
+    rm -f "${gdm_db_dir}/02-fractional-scaling"
+    cat > "${conf}" <<'EOF'
+# Installed by zenbook-duo-daemon: allow the GDM greeter to honor monitors.xml
+# configs that use fractional scaling (required for the Zenbook Duo dual-panel layout).
+[org/gnome/mutter]
+experimental-features=['scale-monitor-framebuffer']
+EOF
+    if ! dconf update 2>/dev/null; then
+        echo "Warning: 'dconf update' failed; GDM greeter layout may not apply" >&2
+    fi
+}
+
+stop_session_service_for_user() {
+    local uid="$1"
+    local user="$2"
+
+    if run_user_systemctl "${uid}" "${user}" is-active --quiet "${SESSION_SERVICE_NAME}" 2>/dev/null; then
+        echo "Stopping session service for ${user}..."
+        run_user_systemctl "${uid}" "${user}" stop "${SESSION_SERVICE_NAME}" || true
+    fi
+}
+
+restart_session_service_for_user() {
+    local uid="$1"
+    local user="$2"
+
+    if ! run_user_systemctl "${uid}" "${user}" daemon-reload; then
+        echo "Warning: Failed to reload user systemd for ${user}" >&2
+        return
+    fi
+
+    if run_user_systemctl "${uid}" "${user}" is-enabled --quiet "${SESSION_SERVICE_NAME}" 2>/dev/null; then
+        if run_user_systemctl "${uid}" "${user}" is-active --quiet "${SESSION_SERVICE_NAME}" 2>/dev/null; then
+            echo "Restarting session service for ${user}..."
+            run_user_systemctl "${uid}" "${user}" restart "${SESSION_SERVICE_NAME}" || true
+        else
+            echo "Starting session service for ${user}..."
+            run_user_systemctl "${uid}" "${user}" start "${SESSION_SERVICE_NAME}" || true
+        fi
+    fi
+}
+
+show_session_service_status_for_user() {
+    local uid="$1"
+    local user="$2"
+
+    echo "Session service status for ${user}:"
+    if ! run_user_systemctl "${uid}" "${user}" status "${SESSION_SERVICE_NAME}" --no-pager; then
+        echo "Warning: Failed to show session service status for ${user}" >&2
+    fi
+}
+
+show_service_statuses() {
+    echo "Main service status:"
+    systemctl status "${SERVICE_NAME}" --no-pager || true
+    for_each_active_user show_session_service_status_for_user
+}
+
+uninstall() {
+    check_root
+    
+    echo "Uninstalling ${SERVICE_NAME}..."
+    
+    # Stop and disable main service if it exists
+    if systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
+        echo "Stopping service..."
+        systemctl stop "${SERVICE_NAME}" || true
+    fi
+    
+    if systemctl is-enabled --quiet "${SERVICE_NAME}" 2>/dev/null; then
+        echo "Disabling service..."
+        systemctl disable "${SERVICE_NAME}" || true
+    fi
+
+    cleanup_legacy_pipe_and_sleep_hooks
+
+    for_each_active_user stop_session_service_for_user
+    echo "Disabling session service globally..."
+    systemctl --global disable "${SESSION_SERVICE_NAME}" >/dev/null 2>&1 || true
+    
+    # Remove service files
+    if [ -f "${SERVICE_FILE}" ]; then
+        echo "Removing main service file..."
+        rm -f "${SERVICE_FILE}"
+    fi
+
+    if [ -f "${SESSION_SERVICE_FILE}" ]; then
+        echo "Removing session service file..."
+        rm -f "${SESSION_SERVICE_FILE}"
+    fi
+
+    if [ -f "${DBUS_POLICY_FILE}" ]; then
+        echo "Removing D-Bus policy file..."
+        rm -f "${DBUS_POLICY_FILE}"
+        reload_system_dbus || true
+    fi
+
+    remove_polkit_policy
+    
+    systemctl daemon-reload
+    for_each_active_user restart_session_service_for_user
+
+    remove_cli_symlink_if_ours
+    
+    # Remove installation directory
+    if [ -d "${INSTALL_DIR}" ]; then
+        echo "Removing installation directory..."
+        rm -rf "${INSTALL_DIR}"
+    fi
+
+    remove_legacy_daemon_group_if_present
+    
+    echo "Uninstallation complete."
+}
+
+install() {
+    check_root
+    
+    echo "Installing ${SERVICE_NAME}..."
+    
+    # Uninstall old version first
+    echo "Uninstalling old version..."
+    uninstall
+    
+    # Create installation directory
+    echo "Creating installation directory..."
+    mkdir -p "${INSTALL_DIR}"
+    
+    # Download binary
+    echo "Downloading binary from ${GITHUB_REPO}/zenbook-duo-daemon..."
+    if ! curl -fSL -o "${BINARY_PATH}" "${GITHUB_REPO}/zenbook-duo-daemon"; then
+        echo "Error: Failed to download binary" >&2
+        exit 1
+    fi
+    if [ ! -s "${BINARY_PATH}" ]; then
+        echo "Error: Downloaded binary is empty" >&2
+        rm -f "${BINARY_PATH}"
+        exit 1
+    fi
+    chmod +x "${BINARY_PATH}"
+    install_cli_symlink
+    install_quirks_from_release
+    
+    # Download main service file
+    echo "Downloading service file from ${GITHUB_REPO}/zenbook-duo-daemon.service..."
+    if ! curl -fSL -o "${SERVICE_FILE}" "${GITHUB_REPO}/zenbook-duo-daemon.service"; then
+        echo "Error: Failed to download service file" >&2
+        rm -f "${BINARY_PATH}"
+        exit 1
+    fi
+    if [ ! -s "${SERVICE_FILE}" ]; then
+        echo "Error: Downloaded service file is empty" >&2
+        rm -f "${BINARY_PATH}" "${SERVICE_FILE}"
+        exit 1
+    fi
+    
+    # Download session service file
+    ensure_session_systemd_user_dir
+    echo "Downloading session service file from ${GITHUB_REPO}/zenbook-duo-session.service..."
+    if ! curl -fSL -o "${SESSION_SERVICE_FILE}" "${GITHUB_REPO}/zenbook-duo-session.service"; then
+        echo "Error: Failed to download session service file" >&2
+        rm -f "${BINARY_PATH}" "${SERVICE_FILE}"
+        exit 1
+    fi
+    if [ ! -s "${SESSION_SERVICE_FILE}" ]; then
+        echo "Error: Downloaded session service file is empty" >&2
+        rm -f "${BINARY_PATH}" "${SERVICE_FILE}" "${SESSION_SERVICE_FILE}"
+        exit 1
+    fi
+    for_each_active_user remove_stale_session_override_for_user
+
+    echo "Downloading D-Bus policy file from ${GITHUB_REPO}/${DBUS_POLICY_NAME}..."
+    if ! curl -fSL -o "${DBUS_POLICY_FILE}" "${GITHUB_REPO}/${DBUS_POLICY_NAME}"; then
+        echo "Error: Failed to download D-Bus policy file" >&2
+        rm -f "${BINARY_PATH}" "${SERVICE_FILE}" "${SESSION_SERVICE_FILE}"
+        exit 1
+    fi
+    if [ ! -s "${DBUS_POLICY_FILE}" ]; then
+        echo "Error: Downloaded D-Bus policy file is empty" >&2
+        rm -f "${BINARY_PATH}" "${SERVICE_FILE}" "${SESSION_SERVICE_FILE}" "${DBUS_POLICY_FILE}"
+        exit 1
+    fi
+    reload_system_dbus || true
+
+    install_polkit_policy_from_url
+    
+    setup_gdm_fractional_scaling
+    
+    # Run migrate-config command
+    echo "Running config migration..."
+    "${BINARY_PATH}" migrate-config || {
+        echo "Warning: Config migration failed, continuing anyway..." >&2
+    }
+    
+    # Reload systemd and enable/start services
+    echo "Reloading systemd daemon..."
+    systemctl daemon-reload
+    for_each_active_user restart_session_service_for_user
+    
+    echo "Enabling services..."
+    systemctl enable "${SERVICE_NAME}"
+    if ! systemctl --global enable "${SESSION_SERVICE_NAME}"; then
+        echo "Error: systemctl --global enable ${SESSION_SERVICE_NAME} failed. Is systemd-user configured?" >&2
+        exit 1
+    fi
+
+    echo "Starting main service..."
+    systemctl start "${SERVICE_NAME}"
+    for_each_active_user restart_session_service_for_user
+    
+    echo "Installation complete."
+    show_service_statuses
+}
+
+local_install() {
+    check_root
+    
+    if [ -z "$1" ]; then
+        echo "Error: local-install requires a binary path argument" >&2
+        echo "Usage: $0 local-install <binary-path>" >&2
+        exit 1
+    fi
+    
+    local binary_path="$1"
+    
+    local service_file_path="${SCRIPT_DIR}/zenbook-duo-daemon.service"
+    local session_service_file_path="${SCRIPT_DIR}/zenbook-duo-session.service"
+    local dbus_policy_file_path="${SCRIPT_DIR}/${DBUS_POLICY_NAME}"
+    local polkit_policy_file_path="${SCRIPT_DIR}/${POLKIT_POLICY_NAME}"
+    local quirks_file_path="${SCRIPT_DIR}/${QUIRKS_ASSET_NAME}"
+    
+    if [ ! -f "${binary_path}" ]; then
+        echo "Error: Binary file not found: ${binary_path}" >&2
+        exit 1
+    fi
+    
+    if [ ! -f "${service_file_path}" ]; then
+        echo "Error: Service file not found: ${service_file_path}" >&2
+        exit 1
+    fi
+
+    if [ ! -f "${session_service_file_path}" ]; then
+        echo "Error: Session service file not found: ${session_service_file_path}" >&2
+        exit 1
+    fi
+
+    if [ ! -f "${dbus_policy_file_path}" ]; then
+        echo "Error: D-Bus policy file not found: ${dbus_policy_file_path}" >&2
+        exit 1
+    fi
+
+    if [ ! -f "${polkit_policy_file_path}" ]; then
+        echo "Error: Polkit policy file not found: ${polkit_policy_file_path}" >&2
+        exit 1
+    fi
+
+    if [ ! -f "${quirks_file_path}" ]; then
+        echo "Error: Quirk file not found: ${quirks_file_path}" >&2
+        exit 1
+    fi
+    
+    echo "Installing ${SERVICE_NAME} from local files..."
+    
+    # Uninstall old version first
+    echo "Uninstalling old version..."
+    uninstall
+    
+    # Create installation directory
+    echo "Creating installation directory..."
+    mkdir -p "${INSTALL_DIR}"
+    
+    # Copy binary
+    echo "Copying binary from ${binary_path}..."
+    cp "${binary_path}" "${BINARY_PATH}"
+    chmod +x "${BINARY_PATH}"
+    install_cli_symlink
+    install_quirks_from_local_source "${quirks_file_path}"
+    
+    # Copy service files
+    echo "Copying service file from ${service_file_path}..."
+    cp "${service_file_path}" "${SERVICE_FILE}"
+    
+    echo "Copying session service file from ${session_service_file_path}..."
+    ensure_session_systemd_user_dir
+    cp "${session_service_file_path}" "${SESSION_SERVICE_FILE}"
+    for_each_active_user remove_stale_session_override_for_user
+
+    echo "Copying D-Bus policy file from ${dbus_policy_file_path}..."
+    cp "${dbus_policy_file_path}" "${DBUS_POLICY_FILE}"
+    reload_system_dbus || true
+
+    install_polkit_policy_from_path "${polkit_policy_file_path}"
+    
+    setup_gdm_fractional_scaling
+    
+    # Run migrate-config command
+    echo "Running config migration..."
+    "${BINARY_PATH}" migrate-config || {
+        echo "Warning: Config migration failed, continuing anyway..." >&2
+    }
+    
+    # Reload systemd and enable/start services
+    echo "Reloading systemd daemon..."
+    systemctl daemon-reload
+    for_each_active_user restart_session_service_for_user
+    
+    echo "Enabling services..."
+    systemctl enable "${SERVICE_NAME}"
+    if ! systemctl --global enable "${SESSION_SERVICE_NAME}"; then
+        echo "Error: systemctl --global enable ${SESSION_SERVICE_NAME} failed. Is systemd-user configured?" >&2
+        exit 1
+    fi
+
+    echo "Starting main service..."
+    systemctl start "${SERVICE_NAME}"
+    for_each_active_user restart_session_service_for_user
+    
+    echo "Installation complete."
+    show_service_statuses
+}
+
+# Main command dispatcher
+case "${1:-}" in
+    uninstall)
+        uninstall
+        ;;
+    install)
+        install
+        ;;
+    local-install)
+        local_install "$2"
+        ;;
+    *)
+        echo "Usage: $0 {uninstall|install|local-install <binary-path>}" >&2
+        echo "" >&2
+        echo "Commands:" >&2
+        echo "  uninstall          Remove services, D-Bus policy, Polkit policy, CLI symlink, and /opt/zenbook-duo-daemon" >&2
+        echo "  install            Download and install from GitHub releases" >&2
+        echo "  local-install      Install using local binary and service files" >&2
+        exit 1
+        ;;
+esac

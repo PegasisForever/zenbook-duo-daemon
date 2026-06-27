@@ -1,0 +1,20 @@
+[Unit]
+Description=Zenbook Duo Session Daemon
+# GNOME sets XDG_CURRENT_DESKTOP to values such as "GNOME" or "ubuntu:GNOME".
+After=graphical-session.target gnome-session-initialized.target
+# BindsTo (not just PartOf) ensures systemd stops this unit when graphical-session.target
+# stops, even when the unit file is masked or otherwise unreadable (PartOf alone does not
+# propagate stops in that case, leaving stale daemons alive across logout/login cycles).
+BindsTo=graphical-session.target
+
+[Service]
+Type=simple
+# Only start under a GNOME graphical session (physical login uses graphical-session.target).
+ExecCondition=/bin/sh -c 'case "${XDG_CURRENT_DESKTOP:-}" in *GNOME*) exit 0;; *) exit 1;; esac'
+ExecStart=/opt/zenbook-duo-daemon/zenbook-duo-daemon session
+Restart=on-failure
+RestartSec=3
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD polkit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<policyconfig>
+  <vendor>Zenbook Duo Daemon</vendor>
+  <vendor_url>https://github.com/sunnymoon/zenbook-duo-daemon</vendor_url>
+
+  <!-- Active local graphical session (logind “local” + “active”); root is handled by default polkit rules. -->
+  <action id="org.zenbook.duo.register-session">
+    <description>Register the Zenbook Duo session daemon with the system service</description>
+    <message>Authentication is required to register the Zenbook Duo session</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.zenbook.duo.operator">
+    <description>Run Zenbook Duo hardware operator commands (keyboard backlight, displays, LED, etc.)</description>
+    <message>Authentication is required to control Zenbook Duo hardware</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+
+  <action id="org.zenbook.duo.resume-display-applies">
+    <description>Resume Zenbook Duo display apply attempts after the safety guard paused them</description>
+    <message>Authentication is required to resume Zenbook Duo display applies</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

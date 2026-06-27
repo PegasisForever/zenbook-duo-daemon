@@ -29,7 +29,7 @@ impl VirtualKeyboard {
     pub fn new(config: &Config) -> Self {
         let u = UninitDevice::new().unwrap();
 
-        u.set_name("Zenbook Duo Daemon");
+        u.set_name("Zenbook Duo Daemon Improved Keyboard");
         u.set_bustype(BusType::BUS_VIRTUAL as u16);
         u.set_vendor_id(config.vendor_id());
         u.set_product_id(config.product_id());

@@ -7,7 +7,7 @@ use log::{debug, info, warn};
 use nix::libc;
 use tokio::{
     fs,
-    sync::mpsc,
+    sync::{mpsc, watch},
     task::spawn_blocking,
     time::{Instant, sleep},
 };
@@ -19,6 +19,7 @@ use crate::{config::Config, state::KeyboardStateManager};
 #[derive(Clone)]
 pub struct ActivityNotifier {
     tx: mpsc::UnboundedSender<()>,
+    idle_timeout_tx: watch::Sender<u64>,
 }
 
 impl ActivityNotifier {
@@ -27,32 +28,32 @@ impl ActivityNotifier {
     pub fn notify(&self) {
         let _ = self.tx.send(());
     }
+
+    pub fn set_idle_timeout_seconds(&self, seconds: u64) {
+        let _ = self.idle_timeout_tx.send(seconds);
+    }
 }
 
 /// Starts the idle detection task that monitors keyboard activity.
 /// Returns an `ActivityNotifier` that can be used to reset the idle timer from other code.
-/// Returns `None` if idle detection is disabled (idle_timeout_seconds = 0).
+/// Idle detection remains live even when `idle_timeout_seconds = 0` so the timeout can be
+/// changed at runtime without restarting the daemon.
 pub fn start_idle_detection_task(
     config: &Config,
     state_manager: KeyboardStateManager,
 ) -> ActivityNotifier {
-    let idle_timeout = Duration::from_secs(config.idle_timeout_seconds);
-
     // Channel for activity notifications
     let (activity_tx, activity_rx) = mpsc::unbounded_channel::<()>();
+    let (idle_timeout_tx, idle_timeout_rx) = watch::channel(config.idle_timeout_seconds);
 
     let notifier = ActivityNotifier {
         tx: activity_tx.clone(),
+        idle_timeout_tx,
     };
-
-    if config.idle_timeout_seconds == 0 {
-        info!("Idle detection disabled (idle_timeout_seconds = 0)");
-        return notifier;
-    }
 
     // Spawn the idle state manager task
     tokio::spawn(async move {
-        idle_state_task(idle_timeout, activity_rx, state_manager).await;
+        idle_state_task(idle_timeout_rx, activity_rx, state_manager).await;
     });
 
     // Spawn the device monitor task
@@ -65,7 +66,7 @@ pub fn start_idle_detection_task(
 
 /// Task that manages idle state based on activity events
 async fn idle_state_task(
-    idle_timeout: Duration,
+    mut idle_timeout_rx: watch::Receiver<u64>,
     mut activity_rx: mpsc::UnboundedReceiver<()>,
     state_manager: KeyboardStateManager,
 ) {
@@ -73,7 +74,9 @@ async fn idle_state_task(
     let mut last_activity = Instant::now();
 
     loop {
-        let time_until_idle = idle_timeout.saturating_sub(last_activity.elapsed());
+        let idle_timeout = *idle_timeout_rx.borrow();
+        let idle_duration = Duration::from_secs(idle_timeout);
+        let time_until_idle = idle_duration.saturating_sub(last_activity.elapsed());
 
         tokio::select! {
             // Wait for activity notification
@@ -94,8 +97,24 @@ async fn idle_state_task(
                     }
                 }
             }
+            result = idle_timeout_rx.changed() => {
+                if result.is_err() {
+                    info!("Idle timeout channel closed, stopping idle detection");
+                    return;
+                }
+                let new_timeout = *idle_timeout_rx.borrow();
+                if new_timeout == 0 {
+                    if is_idle {
+                        debug!("Idle detection disabled while idle");
+                        state_manager.idle_end();
+                        is_idle = false;
+                    } else {
+                        debug!("Idle detection disabled (idle_timeout_seconds = 0)");
+                    }
+                }
+            }
             // Wait for idle timeout
-            _ = sleep(time_until_idle), if !is_idle => {
+            _ = sleep(time_until_idle), if idle_timeout > 0 && !is_idle => {
                 debug!("Idle detected");
                 state_manager.idle_start();
                 is_idle = true;

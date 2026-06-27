@@ -1,0 +1,27 @@
+[ASUS Zenbook Duo USB Keyboard 2024]
+MatchUdevType=keyboard
+MatchBus=usb
+MatchVendor=0x0B05
+MatchProduct=0x1B2C
+AttrKeyboardIntegration=internal
+
+[ASUS Zenbook Duo USB Keyboard 2025]
+MatchUdevType=keyboard
+MatchBus=usb
+MatchVendor=0x0B05
+MatchProduct=0x1BF2
+AttrKeyboardIntegration=internal
+
+[ASUS Zenbook Duo Bluetooth Keyboard]
+MatchUdevType=keyboard
+MatchBus=bluetooth
+MatchVendor=0x0B05
+MatchProduct=0x1BF3
+AttrKeyboardIntegration=internal
+
+[ASUS Zenbook Duo Bluetooth Touchpad Combo]
+MatchUdevType=touchpad
+MatchBus=bluetooth
+MatchVendor=0x0B05
+MatchProduct=0x1BF3
+AttrTPKComboLayout=below

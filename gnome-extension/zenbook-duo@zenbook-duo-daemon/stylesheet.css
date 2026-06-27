@@ -1,0 +1,93 @@
+/*
+ * Zenbook Duo Keyboard Battery — stylesheet
+ *
+ * Classes applied by extension.js:
+ *   .zenbook-kbd-battery-label   — percentage label in the top bar
+ *   .zenbook-kbd-battery-status  — status label inside the Quick Settings card
+ */
+
+.zenbook-kbd-battery-label {
+    font-size: 0.75em;
+    margin-left: 1px;
+    margin-right: 0;
+}
+
+.zenbook-kbd-battery-flow {
+    margin-left: 0;
+    margin-right: 2px;
+}
+
+.zenbook-status-on {
+    color: #3584e4;
+}
+
+.zenbook-status-off {
+    color: #e01b24;
+}
+
+.zenbook-status-warn {
+    color: #f6d32d;
+}
+
+.zenbook-dimmed {
+    opacity: 0.55;
+}
+
+.zenbook-backlight-box {
+    spacing: 6px;
+    min-width: 260px;
+}
+
+.zenbook-backlight-ticks {
+    spacing: 8px;
+    x-expand: true;
+}
+
+.zenbook-backlight-level {
+    x-expand: true;
+}
+
+.zenbook-backlight-level-button {
+    padding: 8px 10px;
+    min-width: 0;
+    min-height: 0;
+}
+
+.zenbook-backlight-level-content {
+    spacing: 4px;
+}
+
+.zenbook-backlight-level-icon {
+    icon-size: 18px;
+}
+
+.zenbook-backlight-level-label {
+    font-size: 0.85em;
+    text-align: center;
+}
+
+.zenbook-backlight-level-button-active {
+    background-color: rgba(53, 132, 228, 0.2);
+}
+
+.zenbook-backlight-level-button-effective {
+    border: 2px solid rgba(255, 190, 111, 0.95);
+    box-shadow: inset 0 0 0 1px rgba(255, 190, 111, 0.25);
+}
+
+.zenbook-backlight-row {
+    spacing: 8px;
+}
+
+.zenbook-backlight-row-label {
+    min-width: 0;
+    padding-top: 2px;
+}
+
+.zenbook-inline-status {
+    spacing: 0;
+}
+
+.zenbook-drawer-subtitle {
+    font-size: 0.9em;
+}
