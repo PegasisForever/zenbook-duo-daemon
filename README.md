@@ -29,20 +29,20 @@ AI Generated Wiki: [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://dee
 | Volume Down Key                 | ✅         | ✅             | `KEY_VOLUMEDOWN`             | ❌                          |
 | Volume Up Key                   | ✅         | ✅             | `KEY_VOLUMEUP`               | ❌                          |
 | Keyboard Backlight Key          | ✅         | ✅             | `KEY_BACKLIGHT`              | ✅                          |
-| Keyboard Backlight Control      | ✅         | ❌ (1)         | N/A                          | ✅                          |
+| Keyboard Backlight Control      | ✅         | ✅             | N/A                          | ✅                          |
 | Brightness Down Key             | ✅         | ✅             | `KEY_BRIGHTNESSDOWN`         | ✅                          |
 | Brightness Up Key               | ✅         | ✅             | `KEY_BRIGHTNESSUP`           | ✅                          |
 | Extended Display Mode Key       | ✅         | ✅             | `KEY_LEFT_META + KEY_P`      | ❌                          |
 | Swap Up Down Display Key        | ✅         | ✅             | None                         | ✅                          |
 | Microphone Mute Key             | ✅         | ✅             | `KEY_MICMUTE`                | ✅                          |
-| Microphone Mute Key LED Control | ✅         | ❌ (2)         | N/A                          | ✅                          |
+| Microphone Mute Key LED Control | ✅         | ✅             | N/A                          | ✅                          |
 | Emoji Picker Key                | ✅         | ✅             | `KEY_LEFTCTRL + KEY_DOT` (3) | ✅                          |
 | MyASUS Key                      | ✅         | ✅             | None                         | ✅                          |
 | Toggle Secondary Display Key    | ✅         | ✅             | Toggle Secondary Display     | ✅                          |
 | Fn + Function Keys              | ✅         | ✅             | F1 - F12                     | ❌                          |
 
-1. Should be possible, the packet capture file under windows is at `pcap/bt_change_backlight.pcapng`
-2. Should be possible, the packet capture file under windows is at `pcap/bt_micmute_led.pcapng`
+1. Sent as the wired vendor feature report over the Bluetooth hidraw node, see `src/hidraw.rs`
+2. Sent the same way as the backlight, see `src/hidraw.rs`
 3. This key combination only works for GTK apps in GNOME.
 
 ## Installation

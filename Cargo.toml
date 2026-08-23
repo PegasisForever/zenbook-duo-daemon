@@ -10,7 +10,7 @@ evdev-rs = { version = "0.6.3", features = ["serde"] }
 futures = "0.3.31"
 inotify = { version = "0.11.0", features = ["stream"] }
 log = "0.4.29"
-nix = { version = "0.30.1", features = ["fs"] }
+nix = { version = "0.30.1", features = ["fs", "ioctl"] }
 nusb = { version = "0.2.1", features = ["tokio"] }
 pulseaudio = "0.3.1"
 serde = { version = "1.0.228", features = ["alloc"] }

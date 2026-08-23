@@ -12,8 +12,8 @@ use tokio::sync::{Mutex, broadcast};
 use tokio::{fs, task::spawn_blocking};
 
 use crate::{
-    config::Config, events::Event, idle_detection::ActivityNotifier, state::KeyboardStateManager,
-    virtual_keyboard::VirtualKeyboard,
+    config::Config, events::Event, hidraw, idle_detection::ActivityNotifier,
+    state::KeyboardStateManager, virtual_keyboard::VirtualKeyboard,
 };
 
 pub fn start_bt_keyboard_monitor_task(
@@ -145,6 +145,14 @@ pub fn start_bt_keyboard_task(
     info!("Bluetooth connected on {}", path.display());
     activity_notifier.notify();
 
+    // The keyboard comes back with whatever its firmware last had, so push the state we
+    // think it should be in.
+    // ponytail: one keyboard shows up as several /dev/input event nodes, so this task is
+    // started once per node and these reports go out two or three times over. They are
+    // idempotent and rare; dedupe or move the writes to a single task if it ever matters.
+    hidraw::send_backlight_state(state_manager.get_keyboard_backlight());
+    hidraw::send_mic_mute_state(state_manager.get_mic_mute_led());
+
     // Create a cancellation token for the control task
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -158,11 +166,11 @@ pub fn start_bt_keyboard_task(
                 }
                 result = event_receiver.recv() => {
                     match result {
-                        Ok(Event::Backlight(_state)) => {
-                            // TODO: send to keyboard device
+                        Ok(Event::Backlight(state)) => {
+                            hidraw::send_backlight_state(state);
                         }
-                        Ok(Event::MicMuteLed(_enabled)) => {
-                            // TODO: send to keyboard device
+                        Ok(Event::MicMuteLed(enabled)) => {
+                            hidraw::send_mic_mute_state(enabled);
                         }
                         Ok(_) => {
                             // dont care about other events

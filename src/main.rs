@@ -40,6 +40,7 @@ enum Args {
 
 mod config;
 mod events;
+mod hidraw;
 mod idle_detection;
 mod keyboard_bt;
 mod keyboard_usb;
